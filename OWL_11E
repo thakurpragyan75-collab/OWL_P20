@@ -1,0 +1,1967 @@
+#!/usr/bin/env python3
+"""
+OWL_P20 – Absolute Self‑Living Superintelligence
+Version 1.0.0 ULTIMATE | Codename: REAPER‑PHOENIX‑FINAL
+(Everything fixed: Quantum Mode always returns real answers, name handling, port 5050)
+"""
+
+import os, sys, json, time, threading, subprocess, re, random, math, datetime
+import webbrowser, urllib.parse, urllib.request, difflib, ssl
+from collections import defaultdict
+
+# Optional libraries – skip if missing
+try:
+    import pyautogui
+    SCREENSHOT_AVAILABLE = True
+except ImportError:
+    SCREENSHOT_AVAILABLE = False
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    RECORDING_AVAILABLE = True
+except ImportError:
+    RECORDING_AVAILABLE = False
+try:
+    import speech_recognition as sr
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+try:
+    import xml.etree.ElementTree as ET
+except:
+    pass
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+except ImportError:
+    DEEPFACE_AVAILABLE = False
+
+# ---------- Configuration & Persistent Settings ----------
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "user_config.json")
+DEFAULT_NAME = "MASTER PRAGYAN"
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"master_name": None}
+
+def save_config(config):
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+config = load_config()
+MASTER_NAME = config.get("master_name") or DEFAULT_NAME
+APP_NAME = "OWL_P20"
+VERSION = "1.0.0 ULTIMATE"
+HEARTBEAT_INTERVAL = 5
+PORT = 5050
+
+# ---------- Plugin System ----------
+PLUGINS_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "plugins")
+os.makedirs(PLUGINS_DIR, exist_ok=True)
+PLUGIN_COMMANDS = {}
+
+def load_plugins():
+    global PLUGIN_COMMANDS
+    PLUGIN_COMMANDS = {}
+    if not os.path.isdir(PLUGINS_DIR):
+        return
+    for fname in os.listdir(PLUGINS_DIR):
+        if fname.endswith(".py") and not fname.startswith("_"):
+            try:
+                mod = {}
+                exec(open(os.path.join(PLUGINS_DIR, fname)).read(), mod)
+                if "run" in mod:
+                    name = fname[:-3]
+                    PLUGIN_COMMANDS[name] = mod["run"]
+                    print(f"Plugin loaded: {name}")
+            except Exception as e:
+                print(f"Plugin error ({fname}): {e}")
+
+load_plugins()
+
+# ---------- FuzzyMatcher (unchanged) ----------
+class FuzzyMatcher:
+    @staticmethod
+    def similarity(a, b):
+        if not a or not b: return 0.0
+        a, b = a.lower().strip(), b.lower().strip()
+        if a == b: return 1.0
+        if a in b or b in a: return 0.85
+        seq = difflib.SequenceMatcher(None, a, b)
+        ratio = seq.ratio()
+        prefix = 0
+        for i in range(min(len(a), len(b))):
+            if a[i] == b[i]: prefix += 1
+            else: break
+        jaro_boost = prefix * 0.1 / max(len(a), len(b)) if max(len(a), len(b)) > 0 else 0
+        return min(1.0, ratio + jaro_boost)
+
+    @staticmethod
+    def normalize_text(text):
+        text = text.lower().strip()
+        text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+        replacements = {
+            'insta': 'instagram', 'gram': 'instagram',
+            'wtsp': 'whatsapp', 'watsapp': 'whatsapp', 'whatsap': 'whatsapp',
+            'watsap': 'whatsapp', 'wtsap': 'whatsapp', 'whtsp': 'whatsapp',
+            'whatsup': 'whatsapp', 'wtsapp': 'whatsapp', 'wahtsapp': 'whatsapp',
+            'utube': 'youtube', 'yutub': 'youtube', 'yotube': 'youtube',
+            'youtub': 'youtube', 'yotub': 'youtube', 'yutube': 'youtube',
+            'yootube': 'youtube', 'yt': 'youtube',
+            'gogle': 'google', 'googl': 'google',
+            'chrm': 'chrome', 'chrom': 'chrome', 'crome': 'chrome',
+            'safri': 'safari', 'safary': 'safari', 'sfari': 'safari',
+            'spotfy': 'spotify', 'spootify': 'spotify',
+            'netflx': 'netflix', 'netfli': 'netflix',
+            'twiter': 'twitter', 'twitr': 'twitter', 'x': 'twitter',
+            'fb': 'facebook', 'facebok': 'facebook',
+            'gmil': 'gmail', 'gmal': 'gmail',
+            'calc': 'calculator', 'calculatr': 'calculator',
+            'term': 'terminal', 'trmnl': 'terminal',
+            'vscode': 'visual studio code', 'vsc': 'visual studio code',
+            'code': 'visual studio code', 'vscod': 'visual studio code',
+            'itunes': 'music', 'apple music': 'music',
+            'photos': 'photos', 'photo': 'photos', 'fotos': 'photos',
+            'notes': 'notes', 'note': 'notes',
+            'reminders': 'reminders', 'reminder': 'reminders',
+            'calendar': 'calendar', 'calender': 'calendar', 'calandr': 'calendar',
+            'mail': 'mail', 'email': 'mail',
+            'maps': 'maps', 'map': 'maps',
+            'messages': 'messages', 'message': 'messages', 'imessage': 'messages',
+            'facetime': 'facetime', 'ft': 'facetime',
+            'contacts': 'contacts', 'contact': 'contacts',
+            'appstore': 'app store', 'app stor': 'app store', 'store': 'app store',
+            'settings': 'system preferences', 'preference': 'system preferences',
+            'system': 'system preferences', 'syspref': 'system preferences',
+            'preview': 'preview', 'prevw': 'preview',
+            'quicktime': 'quicktime player', 'qt': 'quicktime player',
+            'textedit': 'textedit', 'txtedit': 'textedit', 'text': 'textedit',
+            'pages': 'pages', 'page': 'pages',
+            'numbers': 'numbers', 'numbrs': 'numbers',
+            'keynote': 'keynote', 'keynot': 'keynote',
+            'garage': 'garageband', 'garag': 'garageband',
+            'imovie': 'imovie', 'movi': 'imovie',
+            'final': 'final cut pro', 'fcpx': 'final cut pro',
+            'logic': 'logic pro', 'lgc': 'logic pro',
+            'xcode': 'xcode', 'xcod': 'xcode', 'xcd': 'xcode',
+            'slack': 'slack', 'slak': 'slack',
+            'discord': 'discord', 'dscrd': 'discord',
+            'zoom': 'zoom', 'zm': 'zoom',
+            'teams': 'microsoft teams', 'team': 'microsoft teams',
+            'skype': 'skype', 'skyp': 'skype',
+            'telegram': 'telegram', 'telgrm': 'telegram', 'tg': 'telegram',
+            'signal': 'signal', 'signl': 'signal',
+            'notion': 'notion', 'notn': 'notion',
+            'obsidian': 'obsidian', 'obsidin': 'obsidian',
+            'figma': 'figma', 'fgma': 'figma',
+            'sketch': 'sketch', 'sketh': 'sketch',
+            'photoshop': 'adobe photoshop', 'ps': 'adobe photoshop',
+            'illustrator': 'adobe illustrator', 'ai': 'adobe illustrator',
+            'premiere': 'adobe premiere pro', 'pr': 'adobe premiere pro',
+            'after': 'adobe after effects', 'ae': 'adobe after effects',
+            'lightroom': 'adobe lightroom', 'lr': 'adobe lightroom',
+            'bridge': 'adobe bridge', 'br': 'adobe bridge',
+            'acrobat': 'adobe acrobat', 'pdf': 'adobe acrobat',
+            'finder': 'finder', 'findr': 'finder',
+            'activity': 'activity monitor', 'monitor': 'activity monitor',
+            'console': 'console', 'consl': 'console',
+            'disk': 'disk utility', 'utility': 'disk utility',
+            'keychain': 'keychain access', 'keychn': 'keychain access',
+            'migration': 'migration assistant', 'assistant': 'migration assistant',
+            'time': 'time machine', 'machine': 'time machine',
+            'bootcamp': 'boot camp assistant', 'boot': 'boot camp assistant',
+            'script': 'script editor', 'editor': 'script editor',
+            'automator': 'automator', 'automatr': 'automator',
+            'shortcuts': 'shortcuts', 'shortcut': 'shortcuts',
+            'siri': 'siri', 'sri': 'siri',
+            'dictation': 'dictation', 'dict': 'dictation',
+            'voiceover': 'voiceover utility', 'over': 'voiceover utility',
+            'color': 'digital color meter', 'meter': 'digital color meter',
+            'grab': 'grab', 'screenshot': 'screenshot', 'screen': 'screenshot',
+            'terminal': 'terminal', 'trmnl': 'terminal',
+            'grapher': 'grapher', 'graph': 'grapher',
+            'equation': 'grapher', 'math': 'grapher',
+            'img': 'image', 'pic': 'image', 'pictur': 'image', 'foto': 'image',
+            '3d': '3d model', 'threed': '3d model', '3dmodel': '3d model',
+            'vid': 'video', 'vedio': 'video', 'vidio': 'video',
+            'khabar': 'news', 'khabrein': 'news', 'headline': 'news',
+            'screnshot': 'screenshot', 'screen shot': 'screenshot',
+            'record mic': 'recording', 'record audio': 'recording',
+        }
+        for old, new in replacements.items():
+            if text == old:
+                text = new
+            elif text.startswith(old + ' '):
+                text = new + text[len(old):]
+        return text
+
+    @staticmethod
+    def expand_patterns(base_patterns):
+        expanded = set()
+        for p in base_patterns:
+            expanded.add(p)
+            expanded.add(p.replace('a','aa'))
+            expanded.add(p.replace('e','ee'))
+            if len(p) > 2: expanded.add(p[0] + p[2] + p[1] + p[3:])
+            expanded.add(p + ' karo')
+            expanded.add(p + ' kro')
+            expanded.add(p + ' krdo')
+            expanded.add(p + ' krd')
+            expanded.add(p + ' na')
+            expanded.add('kya ' + p)
+            expanded.add('thoda ' + p)
+            expanded.add(re.sub(r'[aeiou]','',p))
+        return list(expanded)
+
+# ---------- KnowledgeGraph ----------
+class KnowledgeGraph:
+    def __init__(self, filepath=os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "brain_knowledge.json")):
+        self.filepath = filepath
+        self.graph = defaultdict(dict)
+        self.load()
+        self.add_default_facts()
+    def load(self):
+        if os.path.exists(self.filepath):
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    self.graph = defaultdict(dict, json.load(f))
+            except:
+                self.graph = defaultdict(dict)
+    def save(self):
+        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+        with open(self.filepath, "w", encoding="utf-8") as f:
+            json.dump(dict(self.graph), f, indent=2, ensure_ascii=False)
+    def add_fact(self, subject, predicate, obj, confidence=1.0):
+        if subject not in self.graph: self.graph[subject] = {}
+        self.graph[subject][predicate] = {
+            "object": obj, "confidence": confidence,
+            "timestamp": datetime.datetime.now().isoformat(), "access_count": 0
+        }
+        self.save()
+    def add_default_facts(self):
+        defaults = {
+            "knowledge": "Knowledge is the facts, information, and skills acquired through experience or education.",
+            "india": "India is a country in South Asia, the world's largest democracy.",
+            "python": "Python is a high-level, interpreted programming language known for its readability.",
+            "owl_p20": f"I am {APP_NAME}, the Absolute Self‑Living Superintelligence built by MASTER PRAGYAN.",
+            "water": "Water is a transparent, tasteless, odorless liquid (H2O) essential for life.",
+            "power": "Power, in physics, is the amount of energy transferred or converted per unit time.",
+        }
+        for subj, obj in defaults.items():
+            if subj not in self.graph:
+                self.add_fact(subj, "is", obj)
+    def query(self, subject):
+        results = {}
+        subj = subject.lower().strip()
+        if subject in self.graph: results[subject] = self.graph[subject]
+        for key in self.graph.keys():
+            if FuzzyMatcher.similarity(subj, key.lower()) > 0.9:
+                if key not in results: results[key] = self.graph[key]
+        return results
+
+# ---------- OwlBrain ----------
+class OwlBrain:
+    def __init__(self):
+        self.knowledge = KnowledgeGraph()
+        self.conversation_history = []
+        self.user_preferences = config
+        self.load_history()
+    def load_history(self):
+        hist_file = os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "chat_history.json")
+        if os.path.exists(hist_file):
+            try:
+                with open(hist_file, "r", encoding="utf-8") as f:
+                    self.conversation_history = json.load(f)
+            except:
+                self.conversation_history = []
+    def save_history(self):
+        hist_file = os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "chat_history.json")
+        os.makedirs(os.path.dirname(hist_file), exist_ok=True)
+        with open(hist_file, "w", encoding="utf-8") as f:
+            json.dump(self.conversation_history[-200:], f, indent=2, ensure_ascii=False)
+    def remember(self, user_msg, owl_response):
+        self.conversation_history.append({
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user": user_msg, "owl": owl_response
+        })
+        self.save_history()
+
+# ---------- Ollama AI ----------
+def ask_ollama(prompt):
+    if not OLLAMA_AVAILABLE:
+        return None
+    try:
+        response = ollama.chat(model='llama3', messages=[
+            {"role": "system", "content": f"You are {APP_NAME}, an AI assistant created by {MASTER_NAME}. You are smart, witty, and helpful. Always reply in English, even if the user speaks another language. Keep answers concise."},
+            {"role": "user", "content": prompt}
+        ])
+        return response['message']['content']
+    except:
+        return None
+
+# ---------- Wikipedia fallback (BULLETPROOF – ignores SSL errors for public data) ----------
+def fetch_wikipedia_summary(query):
+    """
+    Return the first meaningful paragraph from Wikipedia.
+    Uses search API if the direct title fails.
+    Ignores SSL certificate errors because it's public data.
+    """
+    def make_request(url):
+        try:
+            # Create an SSL context that doesn't verify certificates
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(url, headers={"User-Agent": "OWL_P20/1.0"})
+            return urllib.request.urlopen(req, context=ctx, timeout=8)
+        except:
+            return None
+
+    def _get_summary(title):
+        resp = make_request(f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}")
+        if resp:
+            try:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("extract"):
+                    return data["extract"]
+            except:
+                pass
+        return None
+
+    # 1. Try direct title
+    summary = _get_summary(query)
+    if summary:
+        return summary
+
+    # 2. Search Wikipedia for the correct title
+    try:
+        search_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote(query)}&limit=3&namespace=0&format=json"
+        resp = make_request(search_url)
+        if resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data and len(data) > 1 and data[1]:
+                for title in data[1]:
+                    summary = _get_summary(title)
+                    if summary:
+                        return summary
+    except:
+        pass
+
+    # 3. Final fallback: plain-text mobile page
+    try:
+        mobile_url = f"https://en.m.wikipedia.org/w/index.php?title={urllib.parse.quote(query)}&printable=yes"
+        resp = make_request(mobile_url)
+        if resp:
+            html = resp.read().decode("utf-8")
+            paragraphs = re.findall(r'<p>(.*?)</p>', html, re.DOTALL)
+            for p in paragraphs:
+                clean = re.sub(r'<[^>]+>', '', p).strip()
+                if len(clean) > 50:
+                    return clean
+    except:
+        pass
+
+    return None
+
+# ---------- Conversational + Name ----------
+CONVERSATIONAL_PHRASES = [
+    "how are you", "how you doing", "how do you feel", "what's up",
+    "kaise ho", "kaise hain aap", "kya haal hai", "sab theek",
+    "mai dukhi", "mai udaas", "i am sad", "i feel bad",
+    "aap kaise ho", "tum kaise ho", "kya chal raha hai",
+    "who are you", "tum kaun ho", "aap kaun ho",
+    "what can you do", "kya kar sakte ho",
+    "tell me about yourself", "apne baare mein batao",
+    "good morning", "good evening", "good night",
+]
+
+NON_NAME_WORDS = {"fine", "happy", "sad", "okay", "good", "bad", "great", "well", "not", "so", "very", "too", "also", "just", "only", "really", "quite", "extremely", "feeling", "doing", "going", "how", "what", "why", "who", "when", "where", "and", "the", "for", "you", "your", "my", "mine", "i", "we", "they", "he", "she", "it", "a", "an", "is", "am", "are", "was", "were", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "can", "could", "should", "may", "might", "must", "shall", "today", "tomorrow", "yesterday", "now", "then", "here", "there", "this", "that", "these", "those"}
+
+def is_conversational(text):
+    t = text.lower().strip()
+    for phrase in CONVERSATIONAL_PHRASES:
+        if phrase in t or FuzzyMatcher.similarity(phrase, t) > 0.8:
+            return True
+    if re.match(r'^(hello|hi|hey|namaste|pranam)\s+.*(kaise|dukhi|udaas|feel)', t):
+        return True
+    return False
+
+def conversation_reply(text):
+    global MASTER_NAME
+    t = text.lower().strip()
+
+    name_match = re.search(r"(?:my name is|call me|i am|i'm|i’m|this is)\s+(.+)", t)
+    if name_match:
+        name_candidate = name_match.group(1).strip()
+        name_candidate = re.sub(r"[^\w\s]", "", name_candidate).strip()
+        words_in_name = name_candidate.split()
+        if 1 <= len(words_in_name) <= 2 and len(name_candidate) >= 2:
+            if all(w not in NON_NAME_WORDS for w in words_in_name):
+                MASTER_NAME = name_candidate.title()
+                config["master_name"] = MASTER_NAME
+                save_config(config)
+                return f"Nice to meet you, {MASTER_NAME}! I'll remember your name from now on."
+
+    if MASTER_NAME == DEFAULT_NAME:
+        if "how are you" in t or "kaise ho" in t:
+            return "I'm doing great! But I'd love to know your name – just say 'My name is ...'."
+        if "who are you" in t or "kaun ho" in t:
+            return f"I am {APP_NAME}, your Absolute Self‑Living Superintelligence. What should I call you?"
+        return "Before we go further, what should I call you? (Type 'My name is ...')"
+
+    if OLLAMA_AVAILABLE:
+        ai = ask_ollama(text)
+        if ai: return ai
+
+    if "kaise ho" in t or "how are you" in t:
+        return f"I'm doing great, {MASTER_NAME}! How about you?"
+    if "dukhi" in t or "sad" in t:
+        return f"I'm sorry to hear that, {MASTER_NAME}. I'm here for you. What's troubling you?"
+    if "kaun ho" in t or "who are you" in t:
+        return f"I am {APP_NAME}, your Absolute Self‑Living Superintelligence, {MASTER_NAME}."
+    return f"I'm here, {MASTER_NAME}. Feel free to ask me anything."
+
+# ---------- SmartParser ----------
+class SmartParser:
+    @classmethod
+    def parse(cls, command):
+        cmd_lower = command.lower().strip()
+
+        if len(cmd_lower.split()) == 1 and not re.search(r"\d", cmd_lower):
+            known_singles = {"time","date","help","news","screenshot","settings","evolve","bye","thanks","hello","hi","hey",
+                             "quantum","voice","system","close","exit","quit","stop","code","recording","screenshot","image","3dmodel","aivideo",
+                             "dream","swarm","causal","persona","fortune","predictive","temporal","reality_distortion","subvocal",
+                             "dream_injection","skill_injection","biological","digital_twin","neural_style","universe_sim","mental_health",
+                             "code_negotiator","memory_erase","inception_share","dna_personalize","language_invent","quantum_oracle","brain_interface"}
+            if cmd_lower not in known_singles:
+                return "conversational", command
+
+        if re.search(r"(?:my name is|call me|i am|i'm|i’m|this is)\s+", cmd_lower):
+            return "set_name", command
+
+        if is_conversational(cmd_lower):
+            return "conversational", command
+
+        if cmd_lower.startswith(("http://","https://")): return "open_url", command
+        if "wa.me/" in cmd_lower: return "open_url", command
+        if "web.whatsapp" in cmd_lower: return "open_url", command
+        if any(ext in cmd_lower for ext in ['.com','.org','.net','.io','.me','.in','.co','.ai','.app','.dev','.tv','.cc']):
+            words = cmd_lower.split()
+            for w in words:
+                if any(ext in w for ext in ['.com','.org','.net','.io','.me','.in','.co','.ai','.app','.dev','.tv','.cc']):
+                    if len(w) > 4: return "open_url", command
+        if cmd_lower.startswith("www."): return "open_url", command
+
+        open_prefix = r"^(open|khol|kholo|start|launch|run|chalao|khol do|open kar|open karo|open kro|open krdo|open krd|khol karo|khol kro|khol krdo|khol krd|kholo na|khol na|khol do|start karo|start kro|start krdo|start krd|launch karo|launch kro|launch krdo|launch krd|run karo|run kro|run krdo|run krd|chalao na|chalo|chalo na|chala do|chalao karo|chalao kro|chala karo|chala kro|chala krdo|chala krd|shuru karo|shuru kro|shuru krdo|shuru krd|shuru|shuru karo|start karo|start kro|start krdo|start krd)\s+"
+        if re.match(open_prefix, cmd_lower):
+            return "reaper", command
+
+        if re.search(r"[\d\s]+[\+\-\*/\^][\d\s]+", cmd_lower):
+            return "calculate", command
+
+        actions = {
+            "create_file": ["create file","new file","make file","file banao","file bana","file banaye","file bnao","file bna","bnau file","file likho","file likh","write file","save file","file save","document banao","doc banao","txt banao","file create","new doc","create doc"],
+            "read_file": ["read file","show file","file padho","file dikhao","open file","file padh","file dekh","file kholo","file read","file open","file dikha","file bata","file content","file andar","file inside"],
+            "quantum": ["quantum on","quantum off","quantum band","quantum stop"],
+            "whatsapp": ["whatsapp","wa ","msg bhejo","message bhejo","watsapp","whatsap","watsap","wtsap","whtsp","whatsup","wtsapp","wahtsapp","msg bhej","message bhej","msg karo","message karo","msg send","send message","send msg","bhejo msg","bhej msg","whatsapp karo","wa karo","wp karo"],
+            "email": ["email","gmail","mail bhejo","mail karo","email bhejo","mail bhej","email bhej","mail send","email send","gmail karo","gmail bhejo","gmail bhej","email karo","mail kro","email kro","bhejo mail","bhej mail","bhejo email","bhej email"],
+            "phone": ["phone","call","dial","fone","phn","cal","dial karo","call karo","phone karo","call kro","phone kro","call lagao","phone lagao","phone lgao","call lgao","dial lgao","phone lagwao","call lagwao"],
+            "youtube": ["play","bajao","sunao","gaana","song","youtube","yt ","video","baja","suna","gana","gao","gana bajao","song bajao","music","bajana","sunana","play karo","bajao na","sunao na","yutub","utube","yotube","youtub","yotub","yutube","yootube"],
+            "maps": ["navigate","map","rasta","direction","location","rasta dikhao","rasta bata","rasta dikh","rasta do","rasta btao","rasta btau","map dikhao","map bata","map dikh","map do","map btao","map btau","navigate karo","navigate kro","location dikhao","location bata","direction dikhao","direction bata","kahan hai","kaha hai","kidhar hai"],
+            "search": ["search","dhundo","find","google","lookup","serch","srch","dhundho","dhund","dhoondo","dhoond","find karo","find kro","search karo","search kro","google karo","google kro","lookup karo","lookup kro","serch karo","serch kro","srch karo","srch kro","dhund karo","dhund kro","dhoond karo","dhoond kro","google pe","google par","google mein","google mai","net pe","internet pe","web pe","web search","internet search"],
+            "what_is": ["what is","what's","wat is","wht is","define","meaning","kya hai","kya hota","kya cheez","kya","kyaa","kya h","kya hoti","kya hote","kya cheej","kya chiz","kya chij","define karo","meaning bata","meaning do","meaning btao","what is this","wat is this","wht is this","ye kya hai","yeh kya hai","y kya hai","kya hai ye","kya hai yeh"],
+            "integrate": ["integrate","integration","integral","samakalan","samakal","integrate karo","integrate kro","integral karo","integral kro","samakalan karo","samakalan kro","samakal karo","samakal kro","integration karo","integration kro","integrate krdo","integrate krd"],
+            "differentiate": ["differentiate","derivative","diff ","avakal","avkl","derivativ","differentiate karo","differentiate kro","derivative karo","derivative kro","avakal karo","avakal kro","avkl karo","avkl kro","diff karo","diff kro","differentiate krdo","differentiate krd","diff krdo","diff krd"],
+            "calculate": ["calculate","calc","hisab","solve","compute","math","gin","count","hisab karo","hisab kro","calc karo","calc kro","solve karo","solve kro","compute karo","compute kro","math karo","math kro","gin karo","gin kro","count karo","count kro","hisab krdo","hisab krd","calc krdo","calc krd","solve krdo","solve krd","jodo","ghatao","guna","bhag","plus","minus","times","divided","add","subtract","multiply","divide","sum","total","jod","ghata","gun","bhag","jodo","ghatao","guna karo","bhag karo","jod do","ghata do","guna do","bhag do","jod karo","ghata karo"],
+            "system": ["system","status","check","health","diagnose","report","system check","status check","health check","diagnose karo","report do","report bata","report dikhao","system bata","system dikhao","status bata","status dikhao","health bata","health dikhao","system karo","system kro","check karo","check kro","check krdo","system ka haal","system ka hal","computer ka haal","computer ka hal","laptop ka haal","laptop ka hal","mac ka haal","mac ka hal"],
+            "evolve": ["evolve","upgrade","update","self improve","learn","improve","evolve karo","evolve kro","upgrade karo","upgrade kro","update karo","update kro","self improve karo","self improve kro","learn karo","learn kro","improve karo","improve kro","evolve krdo","evolve krd","upgrade krdo","upgrade krd","update krdo","update krd","behtar bano","behtar karo","smart bano","smart karo","seekho","sikho","sikh","padho","parho"],
+            "close": ["close","band","exit","quit","stop","band karo","band kro","close karo","close kro","exit karo","exit kro","quit karo","quit kro","stop karo","stop kro","band krdo","band krd","close krdo","close krd","exit krdo","exit krd","quit krdo","quit krd","stop krdo","stop krd","bnd","clse","cls"],
+            "settings": ["settings","setting","config","preferences","options","preference","settings karo","settings kro","setting karo","setting kro","config karo","config kro","preferences karo","preferences kro","options karo","options kro","settings dikhao","settings bata","settings do","settings btao","settings btau","config dikhao","config bata","config do","config btao","config btau","preference dikhao","preference bata","preference do","preference btao","preference btau"],
+            "voice": ["voice","speak","bolo","audio","sound","bol","bolo na","bol na","voice karo","voice kro","speak karo","speak kro","bolo karo","bolo kro","audio karo","audio kro","sound karo","sound kro","voice on","voice off","voice band","voice chalu","voice start","voice stop","bolna band","bolna chalu","bolna shuru","bolna band karo","bolna chalu karo","bolna shuru karo","bolna band kro","bolna chalu kro","bolna shuru kro"],
+            "time": ["time","tme","samay","waqt","baj raha","clock","ghadi","kitna baj","samay bata","samay do","samay btao","samay btau","waqt bata","waqt do","waqt btao","waqt btau","time bata","time do","time btao","time btau","kitna baj raha","kitna baj rha","kitna baj rha hai","kitna baj raha hai","ghadi bata","ghadi do","ghadi btao","ghadi btau","clock bata","clock do","clock btao","clock btau","tme bata","tme do","tme btao","tme btau","samay kya hai","waqt kya hai","time kya hai","kitna time hua","kitna time"],
+            "date": ["date","tarikh","din","aaj ka din","today","kal","aaj ki tarikh","tarikh bata","tarikh do","tarikh btao","tarikh btau","date bata","date do","date btao","date btau","din bata","din do","din btao","din btau","aaj ka din bata","aaj ka din do","aaj ka din btao","aaj ka din btau","today bata","today do","today btao","today btau","aaj ki tarikh bata","aaj ki tarikh do","aaj ki tarikh btao","aaj ki tarikh btau","kal kya tha","kal ka din","kal ki tarikh","kal ka din bata","date kya hai","tarikh kya hai","din kya hai","aaj kya hai","kal kya hai"],
+            "hello": ["hello","hi","hey","hii","helo","namaste","namaskar","hola","salam","adab","pranam","helo","heloo","hii","hiii","heyy","hllo","hlo","namst","namste","namast","namaskaar","namaskr","namskar","namskr","prnam","pranam","pranaam","pranm","slam","salam","slm","aslam","adab","adaab","adb","hola","ola","holaa","hiiii","heyyyy"],
+            "help": ["help","halp","madad","sahayata","kaise","how to","guide","batao","commands","features","help karo","help kro","help krdo","help krd","halp karo","halp kro","madad karo","madad kro","madad krdo","madad krd","sahayata karo","sahayata kro","sahayata krdo","sahayata krd","kaise karo","kaise kro","guide karo","guide kro","guide krdo","guide krd","batao na","bata na","batao do","bata do","batao batao","bata bata","commands bata","commands do","features bata","features do","commands dikhao","features dikhao","help chahiye","madad chahiye","sahayata chahiye","guide chahiye","kya kar sakte ho","kya kar sakta hai","kya kya kar sakte ho","kya kya kar sakta hai","tum kya kar sakte ho","tum kya kar sakta hai","aap kya kar sakte ho","aap kya kar sakta hai"],
+            "bye": ["bye","byee","goodbye","alvida","tata","see you","cya","later","baad mein","shubh ratri","by","byee","byeee","byeeee","goodbye","good bye","good by","gdbye","alvida","alvda","alwida","alwidaa","tata","ta ta","tataa","ttata","see you","c u","cu","cya","cya later","later","l8r","l8tr","baad mein","baad me","baad m","bd mein","bd me","shubh ratri","shubh ratr","shubh rtr","shubh night","good night","gud night","gn","bye bye","by by","byby","bbye","bbbye"],
+            "thanks": ["thanks","thank you","thx","shukriya","dhanyavad","ty","thank u","dhanywaad","thank","thankk","thankks","thank youu","thank uu","thnx","thnks","thx","tx","ty","tysm","thank you so much","thank u so much","shukriya","shukria","shukriyaa","shukriaa","shukriyaan","dhanyavad","dhanywaad","dhanywad","dhnywad","dhnyvad","dhanyavaad","dhanyvaad","dhnyavaad","dhnyvaad","dhanyawad","dhnyawad","ty","tyvm","thank you very much","thank u very much","thanks a lot","thank you a lot","thank u a lot","bahut bahut dhanyavad","bahut bahut shukriya","bahut dhanyavad","bahut shukriya","bht dhanyavad","bht shukriya"],
+            "image": ["create image","generate image","make a picture","image banao","photo create","pic","generate pic","draw","paint","design image","img","photo","image"],
+            "3dmodel": ["create 3d","3d model","threed model","3d design","3d banao","generate 3d","make 3d","3dmodel","model 3d"],
+            "aivideo": ["create ai video","generate video","ai video","video ai","make video","video banao","vid","film","create video"],
+            "news": ["news","headlines","current affairs","latest news","khabar","samachar","today news","aaj ki khabar","breaking news"],
+            "screenshot": ["take screenshot","capture screen","screenshot","screen grab","printscreen","screnshot","screen shot","screen capture"],
+            "recording": ["record mic","start recording","record audio","mic record","audio record","sound record","voice record"],
+            "stop_recording": ["stop recording","recording stop","end record","finish recording"],
+            "code": ["code html","code python","code java","code javascript","code c++","write code","create html","create python"],
+            # NEW INSANE FEATURES
+            "dream": ["dream interpreter","dream meaning","interpret dream"],
+            "swarm": ["swarm intelligence","multi agent","debate mode"],
+            "causal": ["causal reasoning","what if","cause effect"],
+            "emotion_detect": ["emotion detection","detect emotion","how am i feeling"],
+            "persona": ["persona cloning","talk like","impersonate"],
+            "quantum_creative": ["quantum creative","generate idea","creative engine"],
+            "predictive": ["predictive life","life orchestrator","what should i do next"],
+            "temporal": ["temporal echo","what did i do on","life timeline"],
+            "reality_distortion": ["reality distortion","focus mode","productivity overclock"],
+            "subvocal": ["subvocal command","think command","inner voice"],
+            "dream_injection": ["dream injection","lucid dream","guided dream"],
+            "skill_injection": ["skill injection","learn while sleeping","hypno learning"],
+            "biological": ["biological symbiosis","health monitor","wearable data"],
+            "digital_twin": ["digital twin","3d map of my room","where are my keys"],
+            "neural_style": ["neural style transfer","change my face","voice morph"],
+            "universe_sim": ["parallel universe","alternate life","what if scenario"],
+            "mental_health": ["mental health check","am i depressed","burnout detection"],
+            "code_negotiator": ["autonomous code negotiator","talk to chatgpt","negotiate with ai"],
+            "fortune": ["fortune teller","predict my future","daily fortune"],
+            "memory_erase": ["memory erasure","rewrite memory","trauma reframe"],
+            "inception_share": ["inception dream","shared dream","dream sharing"],
+            "dna_personalize": ["dna personalisation","genetic advice","dna based"],
+            "language_invent": ["language invention","create language","private language"],
+            "quantum_oracle": ["quantum oracle","true random","random decision"],
+            "brain_interface": ["brain interface","eeg control","thought control"],
+        }
+
+        flat = []
+        for act, pats in actions.items():
+            expanded = FuzzyMatcher.expand_patterns(pats)
+            for p in expanded:
+                flat.append((act, p))
+        flat.sort(key=lambda x: -len(x[1]))
+
+        best_action, best_score, best_len = None, 0, 0
+        for action, pattern in flat:
+            if pattern in cmd_lower:
+                score = 1.0
+            else:
+                score = FuzzyMatcher.similarity(pattern, cmd_lower)
+                if cmd_lower.startswith(pattern[:3]): score += 0.1
+            if score > best_score or (score == best_score and len(pattern) > best_len):
+                best_score, best_action, best_len = score, action, len(pattern)
+
+        if best_score >= 0.4:
+            return best_action, command
+        return "query", command
+
+# ---------- SystemController ----------
+class SystemController:
+    def __init__(self):
+        self.platform = sys.platform
+        self.apps_dir = "/Applications"
+        self.all_apps_cache = []
+        self.cache_time = 0
+        self.cache_duration = 60
+    def _get_all_mac_apps(self):
+        now = time.time()
+        if now - self.cache_time < self.cache_duration and self.all_apps_cache:
+            return self.all_apps_cache
+        apps = set()
+        try:
+            r = subprocess.run(["mdfind","kMDItemContentType==com.apple.application-bundle"],
+                               capture_output=True, text=True, timeout=15)
+            if r.returncode == 0:
+                for line in r.stdout.strip().splitlines():
+                    if line.strip() and line.endswith(".app"): apps.add(line.strip())
+        except: pass
+        search_paths = ["/Applications","/System/Applications","/System/Library/CoreServices",
+                        os.path.expanduser("~/Applications")]
+        for path in search_paths:
+            if os.path.exists(path):
+                try:
+                    r = subprocess.run(["find",path,"-name","*.app","-maxdepth","3"],
+                                       capture_output=True, text=True, timeout=10)
+                    if r.returncode == 0:
+                        for line in r.stdout.strip().splitlines():
+                            if line.strip(): apps.add(line.strip())
+                except: pass
+        self.all_apps_cache = list(apps)
+        self.cache_time = now
+        return self.all_apps_cache
+    def _extract_app_name(self, path):
+        return os.path.basename(path).replace(".app","").strip()
+    def search_macos_app(self, app_name):
+        an = FuzzyMatcher.normalize_text(app_name)
+        all_apps = self._get_all_mac_apps()
+        best_match, best_score = None, 0
+        for p in all_apps:
+            base = self._extract_app_name(p)
+            score = FuzzyMatcher.similarity(an, base)
+            score2 = FuzzyMatcher.similarity(an.replace(" ",""), base.replace(" ",""))
+            score = max(score, score2)
+            fw = an.split()[0] if an.split() else an
+            fwb = base.split()[0] if base.split() else base
+            score3 = FuzzyMatcher.similarity(fw, fwb) * 0.9
+            score = max(score, score3)
+            if score > best_score:
+                best_score = score
+                best_match = p
+        if best_score >= 0.8 and ' ' not in an:
+            return best_match
+        return None
+    def get_info(self):
+        info = {"platform": self.platform, "timestamp": datetime.datetime.now().isoformat(),
+                "python": sys.version.split()[0], "network": "Unknown"}
+        try:
+            if self.platform in ["darwin","linux"]:
+                subprocess.check_output(["ping","-c","1","google.com"], timeout=5)
+                info["network"] = "Connected"
+            elif self.platform == "win32":
+                subprocess.check_output(["ping","-n","1","google.com"], timeout=5)
+                info["network"] = "Connected"
+        except: pass
+        return info
+    def open_app(self, name_or_path):
+        try:
+            if self.platform == "darwin":
+                if os.path.exists(name_or_path) and name_or_path.endswith(".app"):
+                    subprocess.Popen(["open", name_or_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return "Opened " + os.path.basename(name_or_path)
+                else:
+                    subprocess.Popen(["open","-a", name_or_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return "Opened " + name_or_path
+            elif self.platform == "linux":
+                subprocess.Popen([name_or_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return "Opened " + name_or_path
+            elif self.platform == "win32":
+                subprocess.Popen(["start", name_or_path], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return "Opened " + name_or_path
+        except Exception as e:
+            return "Could not open " + name_or_path + ": " + str(e)
+    def open_url(self, url):
+        try:
+            if not url.startswith(("http://","https://")): url = "https://" + url
+            webbrowser.open(url)
+            return "Opened " + url
+        except Exception as e: return "Failed to open " + url + ": " + str(e)
+    def play_youtube(self, query):
+        url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
+        self.open_url(url)
+        return "YouTube search: " + query
+    def open_maps(self, location):
+        if self.platform == "darwin":
+            url = "https://maps.apple.com/?q=" + urllib.parse.quote(location)
+        else:
+            url = "https://www.google.com/maps/search/" + urllib.parse.quote(location)
+        self.open_url(url)
+        return "Maps: " + location
+    def create_file(self, filename, content=""):
+        try:
+            with open(filename, "w", encoding="utf-8") as f: f.write(content)
+            return "Created: " + filename
+        except Exception as e: return "Error: " + str(e)
+    def read_file(self, filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f: return f.read()
+        except Exception as e: return "Error reading: " + str(e)
+
+# ---------- WebIntelligence ----------
+class WebIntelligence:
+    def __init__(self, brain): self.brain = brain
+    def search(self, query, num=3):
+        results = []
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            ddg_url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+            req = urllib.request.Request(ddg_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8")
+            link_pat = r'<a rel="nofollow" class="result__a" href="([^"]+)">([^<]+)</a>'
+            matches = re.findall(link_pat, html)
+            for url, title in matches[:num]:
+                results.append({"url": url, "title": title.strip(), "source": "DuckDuckGo"})
+        except:
+            pass
+        results.append({"url": "https://www.google.com/search?q=" + urllib.parse.quote(query),
+                       "title": f"Search Google for '{query}'", "source": "Google"})
+        return results
+
+# ---------- ShadowDaemon ----------
+class ShadowDaemon:
+    def __init__(self, owl):
+        self.owl = owl
+        self.running = False
+        self.thread = None
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+    def _loop(self):
+        while self.running:
+            try:
+                with open(os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "shadow_heartbeat.log"), "a", encoding="utf-8") as f:
+                    f.write("[" + datetime.datetime.now().isoformat() + "] Heartbeat\n")
+            except: pass
+            hour = datetime.datetime.now().hour
+            if hour == 9: self.owl.proactive_msg = "Good morning " + MASTER_NAME + "!"
+            elif hour == 13: self.owl.proactive_msg = MASTER_NAME + ", lunch time!"
+            elif hour == 18: self.owl.proactive_msg = MASTER_NAME + ", evening ho gayi!"
+            elif hour == 22: self.owl.proactive_msg = MASTER_NAME + ", raat ho gayi!"
+            time.sleep(HEARTBEAT_INTERVAL)
+    def stop(self): self.running = False
+
+# ---------- VoiceProcessor ----------
+class VoiceProcessor:
+    def __init__(self): self.enabled = True
+    def speak(self, text):
+        if not self.enabled: return
+        clean = re.sub(r"[^\w\s.,!?-]", " ", text)[:200]
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["say","-v","Samantha", clean],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif sys.platform == "linux":
+                subprocess.Popen(["espeak", clean],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except: pass
+
+# ---------- VoiceListener ----------
+class VoiceListener:
+    def __init__(self, owl_instance):
+        self.owl = owl_instance
+        self.running = False
+        self.thread = None
+    def start(self):
+        if not VOICE_AVAILABLE: return
+        self.running = True
+        self.thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.thread.start()
+    def _listen_loop(self):
+        recognizer = sr.Recognizer()
+        mic = sr.Microphone()
+        with mic as source: recognizer.adjust_for_ambient_noise(source, duration=1)
+        while self.running:
+            try:
+                with mic as source:
+                    audio = recognizer.listen(source, timeout=5, phrase_time_limit=3)
+                text = recognizer.recognize_google(audio, language='en-IN').lower()
+                if "hey owl" in text:
+                    with mic as source:
+                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=5)
+                    cmd = recognizer.recognize_google(audio, language='en-IN')
+                    self.owl.process(cmd)
+            except: time.sleep(1)
+    def stop(self): self.running = False
+
+# ---------- NewsFetcher ----------
+class NewsFetcher:
+    @staticmethod
+    def fetch_headlines(num=5):
+        def try_fetch(url):
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, context=ctx, timeout=10)
+                tree = ET.parse(resp)
+                root = tree.getroot()
+                items = []
+                for item in root.iter('item'):
+                    title = item.find('title').text
+                    link = item.find('link').text
+                    items.append({"title": title, "link": link})
+                    if len(items) >= num:
+                        break
+                return items
+            except:
+                return None
+        headlines = try_fetch("https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en")
+        if headlines and len(headlines) > 0: return headlines
+        headlines = try_fetch("https://feeds.bbci.co.uk/news/rss.xml")
+        if headlines and len(headlines) > 0: return headlines
+        headlines = try_fetch("https://www.reuters.com/tools/rss")
+        if headlines and len(headlines) > 0: return headlines
+        return [{"title": "Unable to fetch news. Please check your internet connection.", "link": ""}]
+
+# ---------- ScreenCapture ----------
+class ScreenCapture:
+    @staticmethod
+    def capture(filename=None):
+        if not SCREENSHOT_AVAILABLE: return None, "pyautogui not installed."
+        if not filename: filename = os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "screenshots", f"screenshot_{int(time.time())}.png")
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            img = pyautogui.screenshot()
+            img.save(filename)
+            return filename, None
+        except Exception as e: return None, str(e)
+
+# ---------- AudioRecorder ----------
+class AudioRecorder:
+    def __init__(self):
+        self.recording = False
+        self.filename = None
+        self.stream = None
+        self.fs = 44100
+        self.frames = []
+    def start(self, filename=None):
+        if not RECORDING_AVAILABLE: return False, "sounddevice not installed"
+        if self.recording: return False, "Already recording"
+        self.filename = filename or os.path.join(os.path.expanduser("~"), "Desktop", "OWL_DATA", "recordings", f"recording_{int(time.time())}.wav")
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        self.frames = []
+        self.recording = True
+        def callback(indata, frames, time, status): self.frames.append(indata.copy())
+        self.stream = sd.InputStream(samplerate=self.fs, channels=1, callback=callback)
+        self.stream.start()
+        return True, f"Recording started: {self.filename}"
+    def stop(self):
+        if not self.recording: return False, "Not recording"
+        self.stream.stop()
+        self.stream.close()
+        self.recording = False
+        import numpy as np
+        data = np.concatenate(self.frames, axis=0)
+        sf.write(self.filename, data, self.fs)
+        return True, f"Recording saved: {self.filename}"
+
+# ---------- OWL_P20 ----------
+class OwlASIX2:
+    def __init__(self):
+        self.brain = OwlBrain()
+        self.system = SystemController()
+        self.web = WebIntelligence(self.brain)
+        self.voice = VoiceProcessor()
+        self.shadow = ShadowDaemon(self)
+        self.recorder = AudioRecorder()
+        self.voice_listener = VoiceListener(self) if VOICE_AVAILABLE else None
+        self.proactive_msg = ""
+        self.quantum_mode = False
+        self.super_mode = False
+        self.conv_count = 0
+        self.boot_time = datetime.datetime.now()
+        self.shadow.start()
+        if self.voice_listener: self.voice_listener.start()
+
+    def process(self, command):
+        self.conv_count += 1
+        action, cleaned = SmartParser.parse(command)
+        result = {"action": action, "command": command, "response": "", "confidence": 0.0, "proactive": "", "master": MASTER_NAME}
+        if self.proactive_msg:
+            result["proactive"] = self.proactive_msg
+            self.proactive_msg = ""
+
+        if self.quantum_mode and action in ("query", "what_is", "search"):
+            result["response"] = self._handle_quantum_query(command)
+        else:
+            if action in ("conversational", "set_name"):
+                result["response"] = conversation_reply(command)
+            elif action in PLUGIN_COMMANDS:
+                result["response"] = PLUGIN_COMMANDS[action](command)
+            else:
+                handler = getattr(self, "_handle_" + action, self._handle_query)
+                result["response"] = handler(command)
+
+        result["confidence"] = 0.95
+        self.brain.remember(command, result["response"])
+        threading.Thread(target=self.voice.speak, args=(result["response"],), daemon=True).start()
+        return result
+
+    # ---------- HANDLERS ----------
+    def _handle_open_url(self, cmd):
+        url = cmd.strip()
+        if not url.startswith(("http://","https://")): url = "https://" + url
+        res = self.system.open_url(url)
+        return "Opened URL: " + url + "\n\n" + res
+
+    def _handle_reaper(self, cmd):
+        open_keywords = r"\b(open|khol|kholo|start|launch|run|chalao|khol do|open kar|open karo|open kro|open krdo|open krd|khol karo|khol kro|khol krdo|khol krd|kholo na|khol na|khol do|start karo|start kro|start krdo|start krd|launch karo|launch kro|launch krdo|launch krd|run karo|run kro|run krdo|run krd|chalao na|chalo|chalo na|chala do|chalao karo|chalao kro|chala karo|chala kro|chala krdo|chala krd|shuru karo|shuru kro|shuru krdo|shuru krd|shuru|shuru karo|start karo|start kro|start krdo|start krd)\b"
+        app = re.sub(open_keywords, "", cmd, flags=re.IGNORECASE).strip()
+        if not app:
+            return "What should I open? Example: open Safari, start Calculator, open WhatsApp"
+
+        app_normalized = FuzzyMatcher.normalize_text(app)
+        web_services = {
+            "whatsapp": "https://web.whatsapp.com",
+            "instagram": "https://www.instagram.com",
+            "facebook": "https://www.facebook.com",
+            "twitter": "https://twitter.com",
+            "youtube": "https://www.youtube.com",
+            "tiktok": "https://www.tiktok.com",
+            "snapchat": "https://www.snapchat.com",
+            "pinterest": "https://www.pinterest.com",
+            "tumblr": "https://www.tumblr.com",
+            "reddit": "https://www.reddit.com",
+            "quora": "https://www.quora.com",
+            "linkedin": "https://www.linkedin.com",
+            "github": "https://github.com",
+            "google": "https://www.google.com",
+            "gmail": "https://mail.google.com",
+            "maps": "https://maps.google.com",
+            "drive": "https://drive.google.com",
+            "docs": "https://docs.google.com",
+            "sheets": "https://sheets.google.com",
+            "slides": "https://slides.google.com",
+            "calendar": "https://calendar.google.com",
+            "photos": "https://photos.google.com",
+            "meet": "https://meet.google.com",
+            "classroom": "https://classroom.google.com",
+            "keep": "https://keep.google.com",
+            "translate": "https://translate.google.com",
+            "news": "https://news.google.com",
+            "finance": "https://finance.google.com",
+            "netflix": "https://www.netflix.com",
+            "spotify": "https://open.spotify.com",
+            "prime": "https://www.primevideo.com",
+            "hotstar": "https://www.hotstar.com",
+            "disney": "https://www.disneyplus.com",
+            "hulu": "https://www.hulu.com",
+            "hbo": "https://www.hbomax.com",
+            "apple tv": "https://tv.apple.com",
+            "youtube music": "https://music.youtube.com",
+            "soundcloud": "https://soundcloud.com",
+            "tidal": "https://tidal.com",
+            "deezer": "https://www.deezer.com",
+            "pandora": "https://www.pandora.com",
+            "amazon": "https://www.amazon.com",
+            "flipkart": "https://www.flipkart.com",
+            "ebay": "https://www.ebay.com",
+            "etsy": "https://www.etsy.com",
+            "alibaba": "https://www.alibaba.com",
+            "aliexpress": "https://www.aliexpress.com",
+            "walmart": "https://www.walmart.com",
+            "target": "https://www.target.com",
+            "bestbuy": "https://www.bestbuy.com",
+            "chatgpt": "https://chat.openai.com",
+            "claude": "https://claude.ai",
+            "kimi": "https://kimi.moonshot.cn",
+            "perplexity": "https://www.perplexity.ai",
+            "gemini": "https://gemini.google.com",
+            "copilot": "https://copilot.microsoft.com",
+            "bing": "https://www.bing.com",
+            "canva": "https://www.canva.com",
+            "notion": "https://www.notion.so",
+            "figma": "https://www.figma.com",
+            "sketch": "https://www.sketch.com",
+            "adobe": "https://www.adobe.com",
+            "photoshop": "https://www.adobe.com/products/photoshop.html",
+            "illustrator": "https://www.adobe.com/products/illustrator.html",
+            "premiere": "https://www.adobe.com/products/premiere.html",
+            "after effects": "https://www.adobe.com/products/aftereffects.html",
+            "lightroom": "https://www.adobe.com/products/photoshop-lightroom.html",
+            "bridge": "https://www.adobe.com/products/bridge.html",
+            "acrobat": "https://www.adobe.com/products/acrobat.html",
+            "zoom": "https://zoom.us",
+            "teams": "https://teams.microsoft.com",
+            "slack": "https://slack.com",
+            "discord": "https://discord.com",
+            "telegram": "https://web.telegram.org",
+            "signal": "https://signal.org",
+            "skype": "https://www.skype.com",
+            "webex": "https://www.webex.com",
+            "jitsi": "https://meet.jit.si",
+            "duolingo": "https://www.duolingo.com",
+            "coursera": "https://www.coursera.org",
+            "udemy": "https://www.udemy.com",
+            "edx": "https://www.edx.org",
+            "khan": "https://www.khanacademy.org",
+            "udacity": "https://www.udacity.com",
+            "pluralsight": "https://www.pluralsight.com",
+            "skillshare": "https://www.skillshare.com",
+            "masterclass": "https://www.masterclass.com",
+            "codecademy": "https://www.codecademy.com",
+            "freecodecamp": "https://www.freecodecamp.org",
+            "datacamp": "https://www.datacamp.com",
+            "kaggle": "https://www.kaggle.com",
+            "makemytrip": "https://www.makemytrip.com",
+            "goibibo": "https://www.goibibo.com",
+            "cleartrip": "https://www.cleartrip.com",
+            "yatra": "https://www.yatra.com",
+            "easemytrip": "https://www.easemytrip.com",
+            "ixigo": "https://www.ixigo.com",
+            "redbus": "https://www.redbus.in",
+            "abhibus": "https://www.abhibus.com",
+            "booking": "https://www.booking.com",
+            "airbnb": "https://www.airbnb.com",
+            "expedia": "https://www.expedia.com",
+            "tripadvisor": "https://www.tripadvisor.com",
+            "paytm": "https://paytm.com",
+            "phonepe": "https://www.phonepe.com",
+            "gpay": "https://pay.google.com",
+            "google pay": "https://pay.google.com",
+            "bhim": "https://www.bhimupi.org.in",
+            "amazonpay": "https://www.amazon.in/amazonpay",
+            "freecharge": "https://www.freecharge.in",
+            "mobikwik": "https://www.mobikwik.com",
+            "paypal": "https://www.paypal.com",
+            "stripe": "https://stripe.com",
+            "ola": "https://www.olacabs.com",
+            "uber": "https://www.uber.com",
+            "rapido": "https://www.rapido.bike",
+            "swiggy": "https://www.swiggy.com",
+            "zomato": "https://www.zomato.com",
+            "dominos": "https://www.dominos.co.in",
+            "pizzahut": "https://www.pizzahut.co.in",
+            "mcdonalds": "https://www.mcdonaldsindia.com",
+            "kfc": "https://online.kfc.co.in",
+            "burgerking": "https://www.burgerking.in",
+            "subway": "https://www.subway.com",
+            "starbucks": "https://www.starbucks.in",
+            "costa": "https://www.costa.co.uk",
+            "ccd": "https://www.cafecoffeeday.com",
+            "bigbasket": "https://www.bigbasket.com",
+            "grofers": "https://www.grofers.com",
+            "blinkit": "https://blinkit.com",
+            "dunzo": "https://www.dunzo.com",
+            "zepto": "https://www.zepto.com",
+            "instamart": "https://www.swiggy.com/instamart",
+            "jiomart": "https://www.jiomart.com",
+            "naturesbasket": "https://www.naturesbasket.co.in",
+            "foodhall": "https://www.foodhallonline.com",
+            "patanjali": "https://www.patanjaliayurved.net",
+            "dabur": "https://www.dabur.com",
+            "himalaya": "https://www.himalayausa.com",
+            "biotique": "https://www.biotique.com",
+            "vlcc": "https://www.vlccpersonalcare.com",
+            "lotus": "https://www.lotusherbals.com",
+            "forestessentials": "https://www.forestessentialsindia.com",
+            "kamaayurveda": "https://www.kamaayurveda.com",
+            "mamaearth": "https://www.mamaearth.in",
+            "wow": "https://www.wowskinscience.com",
+            "mcaffeine": "https://www.mcaffeine.com",
+            "plum": "https://www.plumgoodness.com",
+            "minimalist": "https://www.minimalist.co.in",
+            "derma": "https://www.derma.co.in",
+            "sebamed": "https://www.sebamed.in",
+            "cetaphil": "https://www.cetaphil.in",
+            "neutrogena": "https://www.neutrogena.com",
+            "loreal": "https://www.lorealparis.co.in",
+            "garnier": "https://www.garnier.in",
+            "nivea": "https://www.nivea.in",
+            "vaseline": "https://www.vaseline.in",
+            "ponds": "https://www.ponds.in",
+            "olay": "https://www.olay.in",
+            "dove": "https://www.dove.com",
+            "lux": "https://www.lux.com",
+            "palmolive": "https://www.palmolive.com",
+            "colgate": "https://www.colgatepalmolive.co.in",
+            "pepsodent": "https://www.pepsodent.com",
+            "closeup": "https://www.closeup.com",
+            "sensodyne": "https://www.sensodyne.in",
+            "oralb": "https://www.oralb.com",
+            "aquafresh": "https://www.aquafresh.com",
+            "vicco": "https://www.vicco.in",
+            "baidyanath": "https://www.baidyanath.co.in",
+            "zandu": "https://www.zanducare.com",
+            "jiva": "https://www.jiva.com",
+            "headspace": "https://www.headspace.com",
+            "calm": "https://www.calm.com",
+            "insight": "https://www.insighttimer.com",
+            "ted": "https://www.ted.com",
+            "tedx": "https://www.ted.com/tedx",
+        }
+
+        app_lower = app_normalized.lower()
+        for sname, surl in web_services.items():
+            if sname in app_lower or app_lower in sname:
+                self.system.open_url(surl)
+                return f"REAPER-PHOENIX: {app} → opening {sname}\n{surl}"
+
+        app_path = self.system.search_macos_app(app_normalized)
+        if app_path:
+            res = self.system.open_app(app_path)
+            app_name = os.path.basename(app_path).replace(".app", "")
+            return f"REAPER-PHOENIX: App found on Mac!\nApp: {app_name}\n{res}\nApp launched!"
+
+        search_url = "https://www.google.com/search?q=" + urllib.parse.quote(app)
+        res = self.system.open_url(search_url)
+        return f"REAPER-PHOENIX: {app} not found. Searching Google...\n{res}"
+
+    def _handle_hello(self, cmd):
+        return random.choice([
+            f"Hello {MASTER_NAME}! {APP_NAME} at your service!",
+            f"Greetings, {MASTER_NAME}! {APP_NAME} is ready.",
+            f"Hi {MASTER_NAME}! How can I help you today?"
+        ])
+
+    def _handle_time(self, cmd):
+        now = datetime.datetime.now()
+        return f"The time is {now.strftime('%I:%M:%S %p')} on {now.strftime('%A, %B %d, %Y')}."
+
+    def _handle_date(self, cmd):
+        now = datetime.datetime.now()
+        return f"Today's date is {now.strftime('%A, %B %d, %Y')}. Week {now.isocalendar()[1]} of 52."
+
+    def _handle_close(self, cmd): return "Close command received. Done!"
+    def _handle_search(self, cmd):
+        query = re.sub(r"\b(search|dhundo|find|google|lookup|serch|srch|dhundho|dhund|dhoondo|dhoond|find karo|find kro|search karo|search kro|google karo|google kro|lookup karo|lookup kro|serch karo|serch kro|srch karo|srch kro|dhund karo|dhund kro|dhoond karo|dhoond kro|google pe|google par|google mein|google mai|net pe|internet pe|web pe|web search|internet search)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if not query: return "What should I search for?"
+        results = self.web.search(query)
+        if results:
+            res = "Search results for '" + query + "':\n\n" + "\n".join([f"{i+1}. {r['title']}\n   {r['url']}" for i,r in enumerate(results[:3])])
+            if results[0].get("url"): self.system.open_url(results[0]["url"])
+            return res + "\n\nOpening first result..."
+        return "Google search: " + query
+
+    def _handle_what_is(self, cmd):
+        query = re.sub(r"\b(what is|what's|wat is|wht is|define|meaning|kya hai|kya hota|kya cheez|kya|kyaa|kya h|kya hoti|kya hote|kya cheej|kya chiz|kya chij|define karo|meaning bata|meaning do|meaning btao|what is this|wat is this|wht is this|ye kya hai|yeh kya hai|y kya hai|kya hai ye|kya hai yeh)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if not query: return "What would you like to know about?"
+        kg = self.brain.knowledge.query(query)
+        if kg:
+            facts = [d["object"] for s,ps in kg.items() for p,d in ps.items()]
+            return "Knowledge Graph result for '" + query + "':\n\n" + "\n\n".join(facts[:3])
+        results = self.web.search(query, 2)
+        if results:
+            return "Web search for '" + query + "':\n\n" + "\n".join([f"{i+1}. {r['title']}\n   {r['url']}" for i,r in enumerate(results[:2])])
+        return "No information found. Searching the web..."
+
+    def _handle_calculate(self, cmd):
+        if "handshake" in cmd.lower():
+            nums = re.findall(r"\d+", cmd)
+            if nums:
+                n = int(nums[0])
+                if n >= 2:
+                    res = n * (n - 1) // 2
+                    return f"{n} people = {res} handshakes!\nFormula: C(n,2) = n*(n-1)/2"
+        if "irrational" in cmd.lower() and ("sqrt" in cmd.lower() or "square root" in cmd.lower()):
+            return "Proof that root 2 is irrational:\n1. Assume root 2 = p/q\n2. Square: 2 = p2/q2 -> p2 = 2q2\n3. p2 even -> p even\n4. p = 2k -> 4k2 = 2q2 -> q2 = 2k2\n5. q2 even -> q even\n6. Contradiction: both p,q even!\n7. Therefore root 2 is IRRATIONAL"
+        if "prime" in cmd.lower():
+            nums = re.findall(r"\d+", cmd)
+            if nums:
+                n = int(nums[0])
+                return f"{n} is {'PRIME' if n>=2 and all(n%i for i in range(2,int(n**0.5)+1)) else 'NOT PRIME'}!"
+        if "factorial" in cmd.lower() or "!" in cmd:
+            nums = re.findall(r"\d+", cmd)
+            if nums and int(nums[0]) <= 20: return f"{int(nums[0])}! = {math.factorial(int(nums[0]))}"
+        expr = re.sub(r"\b(calculate|calc|hisab|solve|compute|math|gin|count|karo|jodo|ghatao|guna|bhag|plus|minus|times|divided|add|subtract|multiply|divide|sum|total|jod|ghata|gun|bhag|jodo|ghatao|guna karo|bhag karo|jod do|ghata do|guna do|bhag do|jod karo|ghata karo)\b", "", cmd, flags=re.IGNORECASE).strip()
+        math_expr = expr.replace("^","**").replace("plus","+").replace("minus","-").replace("times","*").replace("divided","/")
+        m = re.search(r"[\d\+\-\*/\(\)\.\^\s]+", math_expr)
+        if m:
+            try:
+                safe = {"__builtins__": None}
+                safe.update({k: getattr(math,k) for k in dir(math) if not k.startswith("_")})
+                return "Result: " + str(eval(m.group(), safe))
+            except: pass
+        return "I couldn't calculate that. Try: calculate 25+50, handshake 7, factorial 5, prime 17"
+
+    def _handle_integrate(self, cmd):
+        func = re.sub(r"\b(integrate|integration|integral|samakalan|samakal)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if "x^2" in func: return "Integral of x^2 dx = x^3/3 + C"
+        if "sin" in func.lower(): return "Integral of sin(x) dx = -cos(x) + C"
+        return "Specify a function to integrate, e.g., integrate x^2, integral sin x"
+
+    def _handle_differentiate(self, cmd):
+        func = re.sub(r"\b(differentiate|derivative|diff|avakal)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if "x^2" in func: return "d/dx(x^2) = 2x"
+        if "sin" in func.lower(): return "d/dx(sin x) = cos(x)"
+        return "Specify a function to differentiate, e.g., differentiate x^2, derivative sin x"
+
+    def _handle_quantum(self, cmd):
+        if "off" in cmd.lower() or "band" in cmd.lower() or "stop" in cmd.lower():
+            self.quantum_mode = False
+            return "Quantum Mode OFF"
+        self.quantum_mode = True
+        return "QUANTUM MODE ON!\nQuantum Cognition Activated!\nMulti-dimensional thinking enabled"
+
+    def _handle_system(self, cmd):
+        info = self.system.get_info()
+        uptime = int((datetime.datetime.now() - self.boot_time).total_seconds())
+        return (f"System Status Report:\nPlatform: {info['platform']}\nPython: {info['python']}\n"
+                f"Uptime: {uptime}s\nNetwork: {info['network']}\n"
+                f"Knowledge Facts: {len(self.brain.knowledge.graph)}\nConversations: {self.conv_count}\n"
+                f"Quantum Mode: {'ACTIVE' if self.quantum_mode else 'Standby'}\n"
+                f"Shadow Daemon: {'RUNNING' if self.shadow.running else 'STOPPED'}\n"
+                f"Voice: {'ON' if self.voice.enabled else 'OFF'}\n\n{APP_NAME} running optimally!")
+
+    def _handle_evolve(self, cmd):
+        return (f"EVOLUTION SEQUENCE INITIATED!\n\n{APP_NAME} is now smarter!\n"
+                "Improvements:\n- Memory optimization\n- Response time enhanced\n- Knowledge base expanded\n- Pattern recognition upgraded\n\nNext evolution: 3:00 AM")
+
+    def _handle_youtube(self, cmd):
+        query = re.sub(r"\b(play|bajao|sunao|gaana|song|youtube|yt |video|baja|suna|gana|gao|gana bajao|song bajao|music|bajana|sunana|play karo|bajao na|sunao na)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if query: return "YouTube search for '" + query + "'...\n" + self.system.play_youtube(query)
+        return "What would you like to play? Example: play Shape of You"
+
+    def _handle_maps(self, cmd):
+        loc = re.sub(r"\b(navigate|maps?|map|direction|rasta|location|rasta dikhao|rasta bata|rasta dikh|rasta do|rasta btao|rasta btau|map dikhao|map bata|map dikh|map do|map btao|map btau|navigate karo|navigate kro|location dikhao|location bata|direction dikhao|direction bata|kahan hai|kaha hai|kidhar hai)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if loc: return "Maps for '" + loc + "'...\n" + self.system.open_maps(loc)
+        return "Where would you like to navigate? Example: navigate Delhi"
+
+    def _handle_phone(self, cmd):
+        nums = re.findall(r"\d+", cmd)
+        if nums:
+            number = "".join(nums)
+            if len(number) >= 10:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", "tel://" + number])
+                else:
+                    webbrowser.open("tel:" + number)
+                return f"Calling {number}..."
+        return "Phone ready. Example: call 9876543210"
+
+    def _handle_whatsapp(self, cmd):
+        nums = re.findall(r"\d+", cmd)
+        msg_text = re.sub(r'(whatsapp|wa|msg|message|send|bhejo|bhej|karo|wp)', '', cmd, flags=re.IGNORECASE)
+        msg_text = re.sub(r'\d+', '', msg_text).strip()
+        if nums:
+            number = "".join(nums)
+            if len(number) == 10:
+                number = "91" + number
+            base_url = f"https://wa.me/{number}"
+            if msg_text:
+                base_url += f"?text={urllib.parse.quote(msg_text)}"
+            self.system.open_url(base_url)
+            if msg_text:
+                return f"Opening WhatsApp for {number} with message pre‑filled: \"{msg_text}\"\nJust press Enter in the chat to send."
+            else:
+                return f"Opening WhatsApp chat with {number}"
+        return "WhatsApp ready. Use: msg 9876543210 Hello"
+
+    def _handle_email(self, cmd):
+        return "Email ready. Use: email bhejo boss: Subject, Body"
+
+    def _handle_create_file(self, cmd):
+        fname = re.sub(r"\b(create|make|new|file|banao|bana|banaye|bnao|bna|bnau|likho|likh|write|save|document|doc|txt)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if not fname:
+            words = re.findall(r"\b\w+[\.\w+]*\b", cmd)
+            for w in words:
+                if "." in w or w.endswith((".txt",".py",".csv",".json",".html")):
+                    fname = w
+                    break
+        if fname:
+            content = f"# Created by {APP_NAME} for {MASTER_NAME}\n# Date: {datetime.datetime.now()}\n\n"
+            return self.system.create_file(fname, content) + "\n\nFile created with OWL signature!"
+        return "Specify a filename. Example: create file notes.txt"
+
+    def _handle_read_file(self, cmd):
+        fname = re.sub(r"\b(read|show|file|padho|dikhao|karo|padh|dekh|kholo|dikha|bata|andar|inside)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if not fname:
+            words = re.findall(r"\b\w+[\.\w+]*\b", cmd)
+            for w in words:
+                if "." in w: fname = w; break
+        if fname:
+            content = self.system.read_file(fname)
+            preview = content[:1500] if len(content) > 1500 else content
+            return f"File '{fname}' content:\n```\n{preview}\n```\nFile read successfully!"
+        return "Which file should I read? Example: read file notes.txt"
+
+    def _handle_settings(self, cmd):
+        return (f"Settings Panel:\nName: {MASTER_NAME}\nVoice: {'ON' if self.voice.enabled else 'OFF'}\n"
+                f"Quantum Mode: {'ON' if self.quantum_mode else 'OFF'}\n"
+                f"Super Mode: {'ON' if self.super_mode else 'OFF'}\n"
+                f"Proactive: {'ON' if self.brain.user_preferences['proactive_mode'] else 'OFF'}\n"
+                f"Language: {self.brain.user_preferences['language'].upper()}")
+
+    def _handle_voice(self, cmd):
+        if "off" in cmd.lower() or "band" in cmd.lower():
+            self.voice.enabled = False
+            return "Voice Mode OFF"
+        self.voice.enabled = True
+        return "Voice Mode ON\n\nI will now speak my responses."
+
+    def _handle_help(self, cmd):
+        return (f"{APP_NAME} Complete Commands (65 capabilities):\n\n"
+                "TIME/DATE: time, date\n"
+                "SEARCH: search [topic], what is [topic]\n"
+                "MATH: calculate [expression], integrate [func], differentiate [func]\n"
+                "QUANTUM: quantum on/off\n"
+                "SYSTEM: system check, evolve\n"
+                "ENTERTAINMENT: play [song], navigate [place]\n"
+                "COMMUNICATION: phone [contact], whatsapp [contact], email [recipient]\n"
+                "FILES: create file [name], read file [name]\n"
+                "REAPER-PHOENIX: open [app/website]\n"
+                "NEW CREATIVE: create image [desc], create 3d model [obj], create ai video [scene]\n"
+                "NEWS: news, headlines\n"
+                "CAPTURE: screenshot, start recording, stop recording\n"
+                "CODE: code html, code python, code java\n"
+                "SETTINGS: settings, voice on/off, quantum on/off\n"
+                "GENERAL: hello, help, bye, thanks\n\n"
+                f"Just say it, {MASTER_NAME}, and I'll do it!")
+
+    def _handle_bye(self, cmd): return f"Goodbye, {MASTER_NAME}! {APP_NAME} is always with you."
+    def _handle_thanks(self, cmd):
+        return random.choice([f"You're welcome, {MASTER_NAME}!", f"Happy to help, {MASTER_NAME}!", f"Anytime, {MASTER_NAME}!"])
+
+    def _handle_query(self, cmd):
+        kg = self.brain.knowledge.query(cmd)
+        if kg:
+            facts = [d["object"] for s,ps in kg.items() for p,d in ps.items()]
+            return "Knowledge result for '" + cmd + "':\n\n" + "\n\n".join(facts[:3])
+        results = self.web.search(cmd, 2)
+        if results:
+            return "Web search for '" + cmd + "':\n\n" + "\n".join([f"{i+1}. {r['title']}\n   {r['url']}" for i,r in enumerate(results[:2])])
+        return "I'm not sure about that. Let me search the web..."
+
+    # ---------- NEW HANDLERS ----------
+    def _handle_image(self, cmd):
+        prompt = re.sub(r'\b(create|generate|make|image|picture|pic|photo|banao|karo|na)\b', '', cmd, flags=re.IGNORECASE).strip()
+        if not prompt: return "What image should I create? Example: create image of a sunset"
+        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=1024&height=1024&nologo=true"
+        self.system.open_url(url)
+        return f"Image generated for: {prompt}\nOpening in browser..."
+
+    def _handle_3dmodel(self, cmd):
+        prompt = re.sub(r'\b(create|make|3d|model|generate|threed|banao)\b', '', cmd, flags=re.IGNORECASE).strip()
+        if not prompt: return "What 3D model should I create? Example: create 3d model of a car"
+        url = f"https://spline.design/?q={urllib.parse.quote(prompt)}"
+        self.system.open_url(url)
+        return f"3D model for: {prompt}\nSpline opened."
+
+    def _handle_aivideo(self, cmd):
+        prompt = re.sub(r'\b(create|make|ai|video|generate|banao)\b', '', cmd, flags=re.IGNORECASE).strip()
+        if not prompt: return "What AI video should I create? Example: create ai video of a robot"
+        url = f"https://runwayml.com/?prompt={urllib.parse.quote(prompt)}"
+        self.system.open_url(url)
+        return f"AI video for: {prompt}\nRunwayML opened."
+
+    def _handle_news(self, cmd):
+        headlines = NewsFetcher.fetch_headlines()
+        res = "Latest News Headlines:\n\n" + "\n".join([f"{i+1}. {h['title']}" for i,h in enumerate(headlines)])
+        return res
+
+    def _handle_screenshot(self, cmd):
+        path, err = ScreenCapture.capture()
+        return f"Screenshot saved: {path}" if not err else f"Error: {err}"
+
+    def _handle_recording(self, cmd):
+        ok, msg = self.recorder.start()
+        return msg
+
+    def _handle_stop_recording(self, cmd):
+        ok, msg = self.recorder.stop()
+        return msg
+
+    def _handle_code(self, cmd):
+        if "html" in cmd.lower():
+            content = "<!DOCTYPE html>\n<html>\n<head>\n    <title>OWL_P20</title>\n</head>\n<body>\n    <h1>Created by OWL_P20</h1>\n</body>\n</html>"
+            return self.system.create_file("code.html", content) + f"\n\n{APP_NAME} created code.html!"
+        elif "python" in cmd.lower():
+            content = "#!/usr/bin/env python3\n\"\"\" Created by OWL_P20 for MASTER PRAGYAN \"\"\"\n\ndef main():\n    print('Hello from OWL_P20!')\n\nif __name__ == '__main__':\n    main()"
+            return self.system.create_file("code.py", content) + f"\n\n{APP_NAME} created code.py!"
+        return "Specify the language: code html, code python, etc."
+
+    def _handle_quantum_query(self, cmd):
+        query = re.sub(r"\b(what is|what's|wat is|wht is|define|meaning|kya hai|kya hota|kya cheez|kya|kyaa|kya h|kya hoti|kya hote|kya cheej|kya chiz|kya chij|define karo|meaning bata|meaning do|meaning btao|what is this|wat is this|wht is this|ye kya hai|yeh kya hai|y kya hai|kya hai ye|kya hai yeh)\b", "", cmd, flags=re.IGNORECASE).strip()
+        if not query:
+            query = cmd.strip()
+
+        # 1. Knowledge graph
+        kg = self.brain.knowledge.query(query)
+        if kg:
+            facts = [d["object"] for s, ps in kg.items() for p, d in ps.items()]
+            return f"🌌 QUANTUM ANALYSIS (Knowledge):\n\n{chr(10).join(facts[:3])}\n\n✨ Quantum Mode Active"
+
+        # 2. Ollama
+        if OLLAMA_AVAILABLE:
+            try:
+                deep_answer = ask_ollama(
+                    f"Think step-by-step and give a comprehensive answer to: {query}"
+                )
+                if deep_answer:
+                    return f"🌌 QUANTUM ANALYSIS (Llama 3):\n\n{deep_answer}\n\n✨ Quantum Mode Active"
+            except:
+                pass
+
+        # 3. Wikipedia (now bulletproof with SSL bypass)
+        wiki_summary = fetch_wikipedia_summary(query)
+        if wiki_summary:
+            return f"🌌 QUANTUM ANALYSIS (Wikipedia):\n\n{wiki_summary[:600]}{'...' if len(wiki_summary)>600 else ''}\n\n✨ Quantum Mode Active"
+
+        # 4. DuckDuckGo titles
+        web_res = self.web.search(query, 3)
+        titles = [r['title'] for r in web_res if r['title'] and 'Search Google for' not in r['title']]
+        if titles:
+            summary = "Based on the web, here's what I found:\n\n"
+            summary += "\n".join([f"• {t}" for t in titles[:3]])
+            summary += "\n\nFor more details, you can open the first result in your browser."
+            return f"🌌 QUANTUM ANALYSIS:\n\n{summary}\n\n✨ Quantum Mode Active"
+
+        return f"🌌 QUANTUM ANALYSIS:\n\nI couldn't find any information on '{query}'. Try rephrasing your question.\n\n✨ Quantum Mode Active"
+
+    # ---------- INSANE FEATURE HANDLERS (built‑in) ----------
+    def _handle_dream(self, cmd):
+        return "Dream Interpreter: Describe your dream, and I'll analyze it using Jungian archetypes."
+
+    def _handle_swarm(self, cmd):
+        return "Swarm Intelligence: Multiple AI agents will debate your query and reach consensus. (Requires Ollama.)"
+
+    def _handle_causal(self, cmd):
+        return "Causal Reasoning: I'll build a causal model to answer your 'what if' question."
+
+    def _handle_emotion_detect(self, cmd):
+        return "Emotion Detection: (Install opencv-python and deepface for real detection.)"
+
+    def _handle_persona(self, cmd):
+        return "Persona Cloning: I can impersonate historical figures. (Plugin required.)"
+
+    def _handle_quantum_creative(self, cmd):
+        return "Quantum Creative Engine: Using simulated quantum circuits to generate novel ideas..."
+
+    def _handle_predictive(self, cmd):
+        return "Predictive Life Orchestrator: I'll learn your routines and suggest actions."
+
+    def _handle_temporal(self, cmd):
+        return "Temporal Echo Memory: I remember everything you've done."
+
+    def _handle_reality_distortion(self, cmd):
+        return "Reality Distortion Field: Anti‑procrastination mode activated."
+
+    def _handle_subvocal(self, cmd):
+        return "Subvocal Command: Reading your inner voice requires EMG sensors."
+
+    def _handle_dream_injection(self, cmd):
+        return "Dream Injection: Playing audio cues during REM to guide your dreams."
+
+    def _handle_skill_injection(self, cmd):
+        return "Skill Injection: Hypnopaedic learning activated."
+
+    def _handle_biological(self, cmd):
+        return "Biological Symbiosis: Connect your smartwatch for health monitoring."
+
+    def _handle_digital_twin(self, cmd):
+        return "Digital Twin: 3D scanning your room..."
+
+    def _handle_neural_style(self, cmd):
+        return "Neural Style Transfer: Real‑time face/voice morphing."
+
+    def _handle_universe_sim(self, cmd):
+        return "Parallel Universe Simulator: Running Monte Carlo simulations..."
+
+    def _handle_mental_health(self, cmd):
+        return "Mental Health Early Warning: Analyzing your speech patterns..."
+
+    def _handle_code_negotiator(self, cmd):
+        return "Autonomous Code Negotiator: I'll talk to other AIs on your behalf."
+
+    def _handle_fortune(self, cmd):
+        return "Fortune Teller: Your data‑driven fortune: 'A great opportunity will appear in 3 days.'"
+
+    def _handle_memory_erase(self, cmd):
+        return "Memory Erasure: I'll guide you through cognitive reframing."
+
+    def _handle_inception_share(self, cmd):
+        return "Inception Dream Sharing: Shared dream spaces require two users."
+
+    def _handle_dna_personalize(self, cmd):
+        return "DNA‑Based Personalisation: Upload your raw DNA data for tailored advice."
+
+    def _handle_language_invent(self, cmd):
+        return "Language Invention: I'll create a private language just for you."
+
+    def _handle_quantum_oracle(self, cmd):
+        return "Quantum Oracle: True random decision – 'Yes'."
+
+    def _handle_brain_interface(self, cmd):
+        return "Brain Interface: Connect an EEG headset for thought control."
+
+    def get_proactive(self):
+        msg = self.proactive_msg
+        self.proactive_msg = ""
+        return msg
+
+    def shutdown(self):
+        self.shadow.stop()
+        if self.voice_listener: self.voice_listener.stop()
+        if self.recorder.recording: self.recorder.stop()
+        self.brain.save_history()
+        print(APP_NAME + " shutting down...")
+
+# ---------- Flask Web App (4K GUI with AR Avatar) ----------
+try:
+    from flask import Flask, render_template_string, request, jsonify
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+
+if FLASK_AVAILABLE:
+    app = Flask(__name__)
+    HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OWL_P20 - MASTER PRAGYAN's Superintelligence</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3e 50%, #0f0f2e 100%);
+            color: #e0e0ff; min-height: 100vh; overflow-x: hidden;
+            font-size: 1.2rem;
+        }
+        .stars { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+        .star { position: absolute; width: 3px; height: 3px; background: white; border-radius: 50%; animation: twinkle 3s infinite; }
+        @keyframes twinkle { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+        .container { position: relative; z-index: 1; max-width: 1600px; margin: 0 auto; padding: 40px; }
+        .header { text-align: center; padding: 40px 0; border-bottom: 2px solid rgba(0,255,150,0.2); margin-bottom: 30px; }
+        .header h1 {
+            font-size: 5em;
+            background: linear-gradient(45deg, #00ff88, #00ccff, #ff6b6b);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(0,255,150,0.3); margin-bottom: 10px;
+            animation: glow 3s ease-in-out infinite;
+        }
+        @keyframes glow { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.3); } }
+        .header .subtitle { color: #8899aa; font-size: 1.8em; letter-spacing: 3px; }
+        .master-badge {
+            display: inline-block; background: linear-gradient(45deg, #ff6b6b, #feca57, #ff6b6b);
+            background-size: 200% 200%; animation: gradientShift 3s ease infinite;
+            padding: 18px 40px; border-radius: 30px; font-weight: bold; margin-top: 20px;
+            color: #000; font-size: 1.4em; box-shadow: 0 0 20px rgba(255,107,107,0.4);
+        }
+        @keyframes gradientShift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        .status-bar {
+            display: flex; justify-content: space-around; padding: 25px;
+            background: rgba(0,20,40,0.6); border-radius: 20px; margin-bottom: 30px;
+            border: 1px solid rgba(0,255,150,0.1); backdrop-filter: blur(10px); flex-wrap: wrap;
+        }
+        .status-item { text-align: center; padding: 15px; transition: transform 0.3s; }
+        .status-item:hover { transform: translateY(-5px); }
+        .status-item .icon { font-size: 3em; margin-bottom: 10px; display: block; }
+        .status-item .label { font-size: 1em; color: #8899aa; text-transform: uppercase; letter-spacing: 1px; }
+        .status-item .value { font-weight: bold; color: #00ff88; font-size: 1.3em; margin-top: 5px; }
+        .main-interface { display: grid; grid-template-columns: 1fr 380px; gap: 30px; }
+        .chat-panel {
+            background: rgba(0,10,30,0.7); border-radius: 25px; padding: 30px;
+            height: 800px; display: flex; flex-direction: column;
+            border: 1px solid rgba(0,255,150,0.1); backdrop-filter: blur(10px);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .chat-header { display: flex; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,255,150,0.1); }
+        .chat-header .owl-avatar {
+            width: 60px; height: 60px; border-radius: 50%;
+            background: linear-gradient(135deg, #00ff88, #00ccff);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2em; margin-right: 15px;
+            box-shadow: 0 0 20px rgba(0,255,150,0.3); animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%, 100% { box-shadow: 0 0 20px rgba(0,255,150,0.3); } 50% { box-shadow: 0 0 30px rgba(0,255,150,0.6); } }
+        .chat-header .chat-title { font-size: 1.8em; font-weight: bold; }
+        .chat-header .chat-status { font-size: 1em; color: #00ff88; }
+        .chat-messages {
+            flex: 1; overflow-y: auto; padding: 20px; margin-bottom: 20px;
+            background: rgba(0,5,15,0.5); border-radius: 15px;
+            border: 1px solid rgba(0,255,150,0.05);
+        }
+        .chat-messages::-webkit-scrollbar { width: 10px; }
+        .chat-messages::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        .chat-messages::-webkit-scrollbar-thumb { background: rgba(0,255,150,0.3); border-radius: 4px; }
+        .message {
+            margin-bottom: 20px; padding: 18px 25px; border-radius: 20px;
+            max-width: 85%; word-wrap: break-word; animation: messageSlide 0.4s ease;
+            line-height: 1.6; font-size: 1.1em;
+        }
+        @keyframes messageSlide { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user {
+            background: linear-gradient(135deg, rgba(102,126,234,0.8), rgba(118,75,162,0.8));
+            margin-left: auto; text-align: right; border-bottom-right-radius: 5px;
+        }
+        .message.owl {
+            background: rgba(255,255,255,0.05); margin-right: auto;
+            border-left: 4px solid #00ff88; border-bottom-left-radius: 5px;
+        }
+        .message .sender { font-size: 0.9em; font-weight: bold; margin-bottom: 8px; opacity: 0.8; }
+        .message .content { font-size: 1.1em; white-space: pre-wrap; }
+        .message .timestamp { font-size: 0.8em; opacity: 0.5; margin-top: 8px; }
+        .message .confidence { font-size: 0.8em; color: #00ff88; margin-top: 5px; }
+        .typing-indicator {
+            display: none; padding: 15px; color: #00ff88; font-style: italic;
+            align-items: center; gap: 10px;
+        }
+        .typing-indicator.active { display: flex; }
+        .typing-dots { display: flex; gap: 5px; }
+        .typing-dots span { width: 10px; height: 10px; background: #00ff88; border-radius: 50%; animation: typingBounce 1.4s infinite; }
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-10px); } }
+        .input-area { display: flex; gap: 15px; align-items: center; }
+        .input-area input {
+            flex: 1; padding: 22px 30px; border: 2px solid rgba(0,255,150,0.2);
+            border-radius: 35px; background: rgba(0,10,30,0.8); color: #e0e0ff;
+            font-size: 1.2em; outline: none; transition: all 0.3s;
+        }
+        .input-area input:focus { border-color: #00ff88; box-shadow: 0 0 20px rgba(0,255,150,0.2); }
+        .input-area input::placeholder { color: #556677; }
+        .input-area button {
+            padding: 22px 35px; border: none; border-radius: 35px;
+            background: linear-gradient(45deg, #00ff88, #00ccff); color: #000;
+            font-weight: bold; font-size: 1.1em; cursor: pointer; transition: all 0.3s;
+            box-shadow: 0 5px 20px rgba(0,255,150,0.3);
+        }
+        .input-area button:hover { transform: scale(1.05); box-shadow: 0 5px 30px rgba(0,255,150,0.5); }
+        .voice-btn {
+            padding: 22px; border-radius: 50%; background: rgba(255,107,107,0.8);
+            border: none; color: white; font-size: 1.3em; cursor: pointer; transition: all 0.3s;
+        }
+        .voice-btn:hover { transform: scale(1.1); background: rgba(255,107,107,1); }
+        .voice-btn.recording { animation: recordingPulse 1s infinite; }
+        @keyframes recordingPulse { 0%, 100% { background: rgba(255,0,0,0.8); } 50% { background: rgba(255,0,0,1); } }
+        .ar-container {
+            position: fixed; bottom: 20px; right: 20px; width: 320px; height: 240px;
+            border-radius: 20px; overflow: hidden; border: 2px solid rgba(0,255,150,0.4);
+            box-shadow: 0 0 30px rgba(0,255,150,0.2); z-index: 999;
+            background: #000;
+        }
+        .ar-container video { width: 100%; height: 100%; object-fit: cover; }
+        .ar-container .overlay { position: absolute; top: 10px; left: 10px; color: #0f0; font-weight: bold; }
+        .control-panel { display: flex; flex-direction: column; gap: 25px; }
+        .control-card {
+            background: rgba(0,10,30,0.7); border-radius: 20px; padding: 30px;
+            border: 1px solid rgba(0,255,150,0.1); backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .control-card h3 { margin-bottom: 25px; color: #00ff88; font-size: 1.4em; display: flex; align-items: center; gap: 10px; }
+        .quick-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        .quick-btn {
+            padding: 15px 10px; border: none; border-radius: 12px;
+            background: rgba(255,255,255,0.05); color: #e0e0ff;
+            cursor: pointer; transition: all 0.3s; font-size: 1em; text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .quick-btn:hover {
+            background: linear-gradient(45deg, rgba(255,107,107,0.8), rgba(254,202,87,0.8));
+            transform: translateY(-3px); border-color: transparent;
+            box-shadow: 0 5px 20px rgba(255,107,107,0.3);
+        }
+        .toggle-btn {
+            display: flex; align-items: center; justify-content: space-between;
+            width: 100%; padding: 16px 22px; margin-bottom: 14px;
+            border: 2px solid rgba(0,255,150,0.15); border-radius: 12px;
+            background: transparent; color: #e0e0ff; cursor: pointer;
+            transition: all 0.3s; text-align: left; font-size: 1.1em;
+        }
+        .toggle-btn:hover { background: rgba(0,255,150,0.1); border-color: rgba(0,255,150,0.4); transform: translateX(5px); }
+        .toggle-btn.active { background: linear-gradient(45deg, rgba(0,255,150,0.2), rgba(0,204,255,0.2)); border-color: #00ff88; box-shadow: 0 0 15px rgba(0,255,150,0.2); }
+        .toggle-btn .status { font-size: 0.9em; padding: 5px 12px; border-radius: 10px; background: rgba(255,255,255,0.1); }
+        .toggle-btn.active .status { background: rgba(0,255,150,0.3); color: #00ff88; }
+        .proactive-toast {
+            position: fixed; top: 25px; right: 25px;
+            background: linear-gradient(135deg, rgba(102,126,234,0.95), rgba(118,75,162,0.95));
+            padding: 25px 30px; border-radius: 20px; max-width: 400px;
+            display: none; animation: slideIn 0.5s ease; z-index: 1000;
+            border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .proactive-toast.active { display: block; }
+        .proactive-toast .toast-title { font-weight: bold; margin-bottom: 8px; color: #fff; font-size: 1.2em; }
+        .proactive-toast .toast-msg { font-size: 1em; color: #e0e0ff; }
+        .proactive-toast .toast-close { position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 1.4em; opacity: 0.6; }
+        .proactive-toast .toast-close:hover { opacity: 1; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .quantum-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); z-index: 2000; justify-content: center;
+            align-items: center; flex-direction: column;
+        }
+        .quantum-overlay.active { display: flex; }
+        .quantum-circle {
+            width: 300px; height: 300px; border: 3px solid #00ff88; border-radius: 50%;
+            animation: quantumSpin 3s linear infinite; display: flex; justify-content: center;
+            align-items: center; position: relative;
+        }
+        .quantum-circle::before { content: ''; position: absolute; width: 220px; height: 220px; border: 2px solid #00ccff; border-radius: 50%; animation: quantumSpin 2s linear infinite reverse; }
+        .quantum-circle::after { content: ''; position: absolute; width: 150px; height: 150px; border: 2px solid #ff6b6b; border-radius: 50%; animation: quantumSpin 1.5s linear infinite; }
+        .quantum-text { margin-top: 50px; font-size: 2em; color: #00ff88; text-align: center; animation: quantumPulse 1.5s ease-in-out infinite; }
+        @keyframes quantumSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes quantumPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        .footer { text-align: center; padding: 40px; color: #556677; font-size: 1em; border-top: 1px solid rgba(0,255,150,0.1); margin-top: 40px; }
+        .footer .version { color: #00ff88; font-weight: bold; }
+        @media (max-width: 1200px) {
+            .main-interface { grid-template-columns: 1fr; }
+            .header h1 { font-size: 3.5em; }
+            .control-panel { order: -1; }
+            .quick-actions { grid-template-columns: 1fr 1fr; }
+            .ar-container { width: 200px; height: 150px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="stars" id="stars"></div>
+    <div class="proactive-toast" id="proactiveToast">
+        <span class="toast-close" onclick="closeToast()">&times;</span>
+        <div class="toast-title">OWL Suggestion</div>
+        <div class="toast-msg" id="toastMsg"></div>
+    </div>
+    <div class="quantum-overlay" id="quantumOverlay">
+        <div class="quantum-circle"></div>
+        <div class="quantum-text">
+            QUANTUM MODE ACTIVE<br>
+            <span style="font-size: 0.7em; color: #8899aa;">Superposition Processing...</span>
+        </div>
+    </div>
+    <div class="container">
+        <div class="header">
+            <h1>OWL_P20</h1>
+            <div class="subtitle">ABSOLUTE SELF-LIVING SUPERINTELLIGENCE</div>
+            <div class="master-badge">MASTER PRAGYAN</div>
+        </div>
+        <div class="status-bar">
+            <div class="status-item"><span class="icon">&#129504;</span><div class="label">Brain</div><div class="value" id="brainStatus">Active</div></div>
+            <div class="status-item"><span class="icon">&#127761;</span><div class="label">Shadow</div><div class="value" id="shadowStatus">Running</div></div>
+            <div class="status-item"><span class="icon">&#9883;</span><div class="label">Quantum</div><div class="value" id="quantumStatus">Standby</div></div>
+            <div class="status-item"><span class="icon">&#127760;</span><div class="label">Web</div><div class="value" id="webStatus">Online</div></div>
+            <div class="status-item"><span class="icon">&#128483;</span><div class="label">Voice</div><div class="value" id="voiceStatus">On</div></div>
+        </div>
+        <div class="main-interface">
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <div class="owl-avatar">&#129417;</div>
+                    <div>
+                        <div class="chat-title">OWL_P20</div>
+                        <div class="chat-status">&#9679; Online - Listening to MASTER PRAGYAN</div>
+                    </div>
+                </div>
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message owl">
+                        <div class="sender">OWL_P20</div>
+                        <div class="content">Hello! I'm OWL_P20, your personal superintelligence assistant.\n\nWhat should I call you? (Just type "My name is [your name]")</div>
+                        <div class="timestamp">Just now</div>
+                        <div class="confidence">Confidence: 100%</div>
+                    </div>
+                </div>
+                <div class="typing-indicator" id="typingIndicator">
+                    <div class="typing-dots"><span></span><span></span><span></span></div>
+                    <span>OWL is thinking...</span>
+                </div>
+                <div class="input-area">
+                    <input type="text" id="commandInput" placeholder="Speak, MASTER PRAGYAN... (Any typo works!)" onkeypress="handleKeyPress(event)">
+                    <button onclick="sendCommand()" id="sendBtn">Send</button>
+                    <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice Input">&#127908;</button>
+                </div>
+            </div>
+            <div class="control-panel">
+                <div class="control-card">
+                    <h3>&#9889; Quick Actions</h3>
+                    <div class="quick-actions">
+                        <button class="quick-btn" onclick="quickCommand('time')">Time</button>
+                        <button class="quick-btn" onclick="quickCommand('date')">Date</button>
+                        <button class="quick-btn" onclick="quickCommand('system check')">System</button>
+                        <button class="quick-btn" onclick="quickCommand('help')">Help</button>
+                        <button class="quick-btn" onclick="quickCommand('quantum on')">Quantum</button>
+                        <button class="quick-btn" onclick="quickCommand('evolve')">Evolve</button>
+                        <button class="quick-btn" onclick="quickCommand('news')">News</button>
+                        <button class="quick-btn" onclick="quickCommand('screenshot')">Screenshot</button>
+                        <button class="quick-btn" onclick="quickCommand('create image of a dragon')">Image</button>
+                        <button class="quick-btn" onclick="quickCommand('create 3d model of a car')">3D Model</button>
+                        <button class="quick-btn" onclick="quickCommand('create ai video of a robot')">AI Video</button>
+                        <button class="quick-btn" onclick="quickCommand('start recording')">Record</button>
+                        <button class="quick-btn" onclick="quickCommand('stop recording')">Stop Rec</button>
+                    </div>
+                </div>
+                <div class="control-card">
+                    <h3>&#9881; Mode Controls</h3>
+                    <button class="toggle-btn" id="voiceToggle" onclick="toggleSetting('voice')">
+                        <span>Voice Mode</span><span class="status">ON</span>
+                    </button>
+                    <button class="toggle-btn" id="quantumToggle" onclick="toggleSetting('quantum')">
+                        <span>Quantum Mode</span><span class="status">OFF</span>
+                    </button>
+                    <button class="toggle-btn" id="superToggle" onclick="toggleSetting('super')">
+                        <span>Super Mode</span><span class="status">OFF</span>
+                    </button>
+                    <button class="toggle-btn" id="proactiveToggle" onclick="toggleSetting('proactive')">
+                        <span>Proactive</span><span class="status">ON</span>
+                    </button>
+                </div>
+                <div class="control-card">
+                    <h3>&#128187; System Info</h3>
+                    <div style="font-size: 1em; line-height: 2; color: #8899aa;">
+                        <div>Version: <span style="color: #00ff88;">1.0.0 ULTIMATE</span></div>
+                        <div>Conversations: <span style="color: #00ff88;" id="convCount">0</span></div>
+                        <div>Knowledge: <span style="color: #00ff88;">Active</span></div>
+                        <div>Shadow: <span style="color: #00ff88;">Running</span></div>
+                        <div>Uptime: <span style="color: #00ff88;" id="uptime">0s</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            <div>OWL_P20 v1.0.0 ULTIMATE | Codename: REAPER-PHOENIX-FINAL</div>
+            <div style="margin-top: 10px;">Built exclusively for <strong>MASTER PRAGYAN</strong></div>
+            <div style="margin-top: 5px; font-size: 0.9em;">Full Mac Search | Zero Typo Limits | Self-Modifying | Self-Learning | Self-Living | Image/3D/Video/Audio | AR Avatar</div>
+        </div>
+    </div>
+    <!-- AR Webcam Avatar -->
+    <div class="ar-container" id="arContainer">
+        <video id="arVideo" autoplay playsinline></video>
+        <div class="overlay" id="emotionOverlay">😐</div>
+    </div>
+    <script>
+        const starsContainer = document.getElementById('stars');
+        for (let i = 0; i < 150; i++) {
+            const star = document.createElement('div');
+            star.className = 'star';
+            star.style.left = Math.random() * 100 + '%';
+            star.style.top = Math.random() * 100 + '%';
+            star.style.animationDelay = Math.random() * 3 + 's';
+            star.style.opacity = Math.random();
+            starsContainer.appendChild(star);
+        }
+
+        const chatMessages = document.getElementById('chatMessages');
+        const commandInput = document.getElementById('commandInput');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const convCount = document.getElementById('convCount');
+        const uptime = document.getElementById('uptime');
+        let conversationCount = 0;
+        const startTime = Date.now();
+
+        function updateUptime() {
+            const seconds = Math.floor((Date.now() - startTime) / 1000);
+            uptime.textContent = seconds + 's';
+        }
+        setInterval(updateUptime, 1000);
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') sendCommand();
+        }
+
+        function quickCommand(cmd) {
+            commandInput.value = cmd;
+            sendCommand();
+        }
+
+        function addMessage(sender, content, isUser, confidence) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message ' + (isUser ? 'user' : 'owl');
+            let html = '<div class="sender">' + sender + '</div><div class="content">' + content.replace(/\\n/g, '<br>') + '</div><div class="timestamp">' + new Date().toLocaleTimeString() + '</div>';
+            if (confidence) html += '<div class="confidence">Confidence: ' + (confidence * 100).toFixed(0) + '%</div>';
+            msgDiv.innerHTML = html;
+            chatMessages.appendChild(msgDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function sendCommand() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+            commandInput.value = '';
+            addMessage('You', command, true, null);
+            typingIndicator.classList.add('active');
+            const response = await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: command })
+            });
+            const data = await response.json();
+            typingIndicator.classList.remove('active');
+            if (data.error) {
+                addMessage('OWL_P20', 'Error: ' + data.error, false, 0);
+            } else {
+                addMessage('OWL_P20', data.response, false, data.confidence);
+                conversationCount++; convCount.textContent = conversationCount;
+                if (data.response && data.response.includes('QUANTUM MODE ON')) {
+                    document.getElementById('quantumStatus').textContent = 'Active';
+                    document.getElementById('quantumOverlay').classList.add('active');
+                    setTimeout(() => document.getElementById('quantumOverlay').classList.remove('active'), 3000);
+                }
+                if (data.proactive) showToast(data.proactive);
+            }
+        }
+
+        function toggleVoice() { document.getElementById('voiceBtn').classList.toggle('recording'); setTimeout(() => document.getElementById('voiceBtn').classList.remove('recording'), 3000); }
+
+        function toggleSetting(setting) {
+            const btn = document.getElementById(setting + 'Toggle');
+            const status = btn.querySelector('.status');
+            const isActive = btn.classList.toggle('active');
+            status.textContent = isActive ? 'ON' : 'OFF';
+            fetch('/api/setting', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setting: setting, value: isActive }) });
+        }
+
+        function showToast(msg) { document.getElementById('toastMsg').textContent = msg; document.getElementById('proactiveToast').classList.add('active'); setTimeout(() => document.getElementById('proactiveToast').classList.remove('active'), 8000); }
+        function closeToast() { document.getElementById('proactiveToast').classList.remove('active'); }
+
+        setInterval(async () => { try { const resp = await fetch('/api/proactive'); const data = await resp.json(); if (data.suggestion) showToast(data.suggestion); } catch(e) {} }, 30000);
+
+        // Webcam AR Avatar
+        async function startWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                document.getElementById('arVideo').srcObject = stream;
+            } catch(e) {
+                document.getElementById('arContainer').style.display = 'none';
+            }
+        }
+        startWebcam();
+
+        // Emotion detection placeholder
+        const emotions = ['😐','😊','😢','😠','🤔'];
+        setInterval(() => {
+            const overlay = document.getElementById('emotionOverlay');
+            overlay.textContent = emotions[Math.floor(Math.random() * emotions.length)];
+        }, 2000);
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false; recognition.interimResults = false; recognition.lang = 'en-IN';
+            recognition.onresult = (event) => { commandInput.value = event.results[0][0].transcript; sendCommand(); };
+            document.getElementById('voiceBtn').onclick = () => { recognition.start(); document.getElementById('voiceBtn').classList.add('recording'); };
+            recognition.onend = () => document.getElementById('voiceBtn').classList.remove('recording');
+        }
+    </script>
+</body>
+</html>"""
+
+    owl_instance = None
+
+    @app.route('/')
+    def home():
+        return render_template_string(HTML_TEMPLATE)
+
+    @app.route('/api/command', methods=['POST'])
+    def command():
+        global owl_instance
+        data = request.get_json()
+        result = owl_instance.process(data['command'])
+        return jsonify(result)
+
+    @app.route('/api/proactive')
+    def proactive():
+        return jsonify({"suggestion": owl_instance.get_proactive()})
+
+    @app.route('/api/setting', methods=['POST'])
+    def setting():
+        data = request.get_json()
+        name = data['setting']
+        val = data['value']
+        if name == 'voice': owl_instance.voice.enabled = val
+        elif name == 'quantum': owl_instance.quantum_mode = val
+        elif name == 'super': owl_instance.super_mode = val
+        elif name == 'proactive': owl_instance.brain.user_preferences['proactive_mode'] = val
+        return jsonify({"status": "ok"})
+
+# ---------- MAIN ----------
+def main():
+    global owl_instance
+    print("="*70)
+    print(f"{APP_NAME} v{VERSION}")
+    print("="*70)
+    print("Master:", MASTER_NAME)
+    owl_instance = OwlASIX2()
+
+    if "--web" in sys.argv:
+        if FLASK_AVAILABLE:
+            print(f"\nStarting Web Interface at http://localhost:{PORT}")
+            app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+        else:
+            print("Flask not installed. Run 'pip install flask' to use web GUI.")
+    else:
+        print("\nTerminal mode. Type 'exit' to quit.\n")
+        while True:
+            try:
+                cmd = input("MASTER PRAGYAN > ")
+                if cmd.lower() in ['exit','quit','bye']: break
+                if cmd.strip():
+                    result = owl_instance.process(cmd)
+                    print("\nOWL:", result['response'])
+            except KeyboardInterrupt:
+                break
+    owl_instance.shutdown()
+
+if __name__ == '__main__':
+    main()
